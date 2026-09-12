@@ -131,11 +131,12 @@ def main() -> int:
         after = page.evaluate(SNAPSHOT)
         print(f"  切到鬥士后点「名称」→ 排序={after['sort']} 职业={after['job']} 首行={after['names'][0]!r}")
 
-        # 官网入口
+        # 入口：各服务器卡片自己一组（官网/公告/地图…），页脚另有资料与社区两个。
+        # 手机版取不到 Revival 的数字，但它的三个链接仍要出现在卡片里。
         links = page.evaluate(
-            """() => [...document.querySelectorAll('#links a')].map(a => [a.textContent.replace(' ↗',''), a.getAttribute('href')])"""
+            """() => [...document.querySelectorAll('a.chip')].map(a => [a.textContent.replace(' ↗','').trim(), a.getAttribute('href')])"""
         )
-        print(f"  官网入口 {len(links)} 条，前 3:", links[:3])
+        print(f"  卡片与页脚入口共 {len(links)} 条，前 3:", links[:3])
 
         # ---- 判定 ----
         if counts["jobs"] < 11: problems.append(f"职业按钮只有 {counts['jobs']} 个")
@@ -159,7 +160,9 @@ def main() -> int:
             problems.append(f"切职业后点排序把职业改成了 {after['job']}")
         if after["sort"] != "name":
             problems.append(f"切职业后排序没生效：{after['sort']}")
-        if len(links) < 8: problems.append(f"官网入口只有 {len(links)} 条")
+        # 手机版：Revival 卡片只有 3 个链接（取不到数字，但入口要在），
+        # Legacy 6 个、Dogma Rising 5 个，页脚 2 个 —— 合计 16。
+        if len(links) < 16: problems.append(f"入口只有 {len(links)} 条，卡片与页脚合计应有 16 条")
         for name, url in links:
             if not url.startswith("http"): problems.append(f"入口「{name}」的地址不对: {url}")
 

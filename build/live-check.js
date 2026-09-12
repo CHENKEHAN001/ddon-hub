@@ -76,8 +76,18 @@ async function main() {
    * 否则看起来像数据不全而不是一个说清了的限制。
    */
   if (!home.body.includes('DDON Revival')) problems.push('页面里没有 DDON Revival 卡片')
-  if (!home.body.includes('只允许自家网页读取')) problems.push('Revival 卡片没有说明取不到的原因')
   if (!home.body.includes('min-width:900px')) problems.push('页面没有宽屏媒体查询——电脑上会是一列卡片')
+
+  /*
+   * 每个服务器的入口都在自己的卡片里（不再有独立的「官网入口」区块）。
+   * 从 HTML 只能数到链接总数，所以这里核对"卡片里带链接"这件事，
+   * 具体的每卡片清单由 build/cards-check.py 走 DOM 检查。
+   */
+  const cardLinks = [...home.body.matchAll(/class="chip" href="(https?:[^"]+)"/g)].map((m) => m[1])
+  console.log('\n2b) 卡片内入口')
+  console.log('   带地址的入口链接:', cardLinks.length, '条，去重后', new Set(cardLinks).size, '条')
+  if (cardLinks.length < 15) problems.push(`卡片内入口只有 ${cardLinks.length} 条，三个服务器共应有 15 条`)
+  if (home.body.includes('>官网入口<')) problems.push('「官网入口」区块还在——入口应当只出现在卡片里')
 
   const scripts = [...home.body.matchAll(/<script(?:\s[^>]*)?>([\s\S]*?)<\/script>/g)].map((m) => m[1])
   let scriptOk = true

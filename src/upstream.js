@@ -49,6 +49,9 @@ const CONFIG = {
     legacyMap: 'https://legacyddon.com/map',
     legacyItemSearch: 'https://legacyddon.com/itemsearch',
     legacyBoardQuests: 'https://legacyddon.com/boardquests',
+    /* 与插件面板同一份链接表；日文 wiki 是这个私服自己的，公告入口另有 legacyNews */
+    legacyJpWiki: 'https://wiki.legacyddon.com/jpwiki',
+    legacyDiscord: 'https://discord.gg/ezxtdqfeQ6',
     rising: 'https://dogmarising.netlify.app/',
     risingNews: 'https://dogmarising.netlify.app/discord-live-news',
     risingHowToPlay: 'https://dogmarising.netlify.app/howtoplay',

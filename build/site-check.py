@@ -59,7 +59,8 @@ def main() -> int:
                 liveCards: document.querySelectorAll('#live .card').length,
                 newsItems: document.querySelectorAll('#news .newsItem').length,
                 sections: [...document.querySelectorAll('h2')].map(h => h.textContent),
-                links: document.querySelectorAll('#links a').length,
+                links: document.querySelectorAll('a.chip').length,
+                footerLinks: document.querySelectorAll('.foot .chip').length,
                 headerTag: (document.querySelector('header .tag') || {}).textContent || '',
                 liveText: ((document.getElementById('live') || {}).textContent || '').replace(/\\s+/g, ' ').slice(0, 200),
                 newsText: ((document.getElementById('news') || {}).textContent || '').replace(/\\s+/g, ' ').slice(0, 200),
@@ -165,7 +166,14 @@ def main() -> int:
 
         if info["jobs"] < 11: problems.append(f"职业按钮只有 {info['jobs']} 个")
         if info["skills"] < 20: problems.append(f"技能卡片只有 {info['skills']} 张")
-        if info["links"] < 10: problems.append(f"官网入口只有 {info['links']} 条")
+        # 入口现在都在卡片里（各服务器自己一组），页脚还有两个资料站链接。
+        # 三个服务器卡片的最少入口数是 4+6+5=15。
+        if info["links"] < 15:
+            problems.append(f"卡片里的入口只有 {info['links']} 条，三个服务器共应有 15 条")
+        if info["footerLinks"] < 2:
+            problems.append(f"页脚资料与社区链接只有 {info['footerLinks']} 条")
+        if "官网入口" in info["sections"]:
+            problems.append("「官网入口」区块还在——入口应当只出现在卡片里")
         if errors: problems.append(f"有 {len(errors)} 条 JS 错误")
         if "离线" in info["headerTag"]:
             problems.append("托管版仍在显示「离线可用」文案")

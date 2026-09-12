@@ -101,6 +101,21 @@ input{min-height:34px;padding:6px 10px}
 .newsSum{display:block;color:var(--dim);font-size:11.5px;margin-top:1px}
 
 /* ---------------------------------------------------------------------------
+   卡片内的频道条、元信息行与链接行，版式对齐电脑版与插件面板：
+   服务器卡片自己带副标题与全部入口，不再有独立的「官网入口」区块。
+   --------------------------------------------------------------------------- */
+.chipRow{display:flex;flex-wrap:wrap;gap:6px}
+.barChip{display:inline-flex;align-items:baseline;gap:4px;padding:2px 8px;border-radius:6px;background:var(--panel2);font-size:11.5px;font-variant-numeric:tabular-nums}
+.barChip b{font-weight:600}
+.meta{display:grid;grid-template-columns:auto 1fr;gap:2px 10px;font-size:12px;color:var(--dim)}
+.meta>span:last-child{color:var(--fg)}
+.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11.5px}
+.cardSub.title{font-size:11.5px}
+/* 卡片链接：胶囊按钮，一行一个在窄屏、自动换行在宽屏 */
+a.chip{box-sizing:border-box;display:inline-flex;align-items:center;height:26px;padding:0 10px;border:1px solid var(--line);border-radius:999px;color:var(--dim);font-size:11.5px;text-decoration:none;white-space:nowrap}
+a.chip:hover{border-color:var(--dim);color:var(--fg)}
+
+/* ---------------------------------------------------------------------------
    宽屏：换成表格，卡片隐藏。
    手机上卡片好点，307 行五个数值列在电脑上还是表格好扫。两边用同一份数据、
    同一套排序，所以只有显示形式不同，不会一边有一边没有。
@@ -396,44 +411,95 @@ const JS = String.raw`
    * Revival 的接口只允许 live.ddon.org 自己读取，访客浏览器直连会被 CORS 拦。
    * 电脑版和 DSH 插件是在服务端取数所以不受影响；网站版靠 worker/index.js 那个
    * 代理拿到同样的数据。本地文件版没有服务端可用，只能直连并接受取不到。
+   *
+   * 每张卡片自己带副标题与官网链接，不再有独立的「官网入口」区块——
+   * 电脑版和插件的布局就是这样，链接跟着服务器走比单列一排更好找。
    */
   var NOTES = [
-    { id: 'legacy', label: 'LegacyDDON', url: 'https://legacyddon.com/rpc/status', type: 'worlds', site: boot.links.legacy },
-    { id: 'rising', label: 'Dogma Rising', url: 'https://dogmarising.netlify.app/.netlify/functions/status', type: 'single', site: boot.links.rising },
+    { id: 'legacy', label: 'LegacyDDON', subtitle: 'legacyddon.com · 现代化重制',
+      url: 'https://legacyddon.com/rpc/status', type: 'worlds', site: boot.links.legacy,
+      links: [['官网', boot.links.legacy], ['公告', boot.links.legacyNews], ['地图', boot.links.legacyMap],
+              ['物品检索', boot.links.legacyItemSearch], ['板任务', boot.links.legacyBoardQuests],
+              ['日文 wiki', boot.links.legacyJpWiki]] },
+    { id: 'rising', label: 'Dogma Rising', subtitle: 'dogmarising.netlify.app · 新私服',
+      url: 'https://dogmarising.netlify.app/.netlify/functions/status', type: 'single', site: boot.links.rising,
+      links: [['官网', boot.links.rising], ['Live News（Discord 实时）', boot.links.risingNews],
+              ['怎么玩', boot.links.risingHowToPlay], ['地图', boot.links.risingMap], ['Discord', boot.links.risingDiscord]] },
   ]
   if (boot.hosted){
-    NOTES.unshift({ id: 'revival', label: 'DDON Revival', url: '/api/revival', type: 'proxy', site: boot.links.revival })
+    NOTES.unshift({ id: 'revival', label: 'DDON Revival', subtitle: 'live.ddon.org · 最大私服',
+      url: '/api/revival', type: 'proxy', site: boot.links.revival,
+      links: [['官网', boot.links.revival], ['排行榜', boot.links.revivalLeaderboard],
+              ['官方 Wiki', boot.links.revivalWiki], ['怎么玩', boot.links.revivalHowToPlay]] })
   }
   /* 取不到时这张卡片仍然要出现（说明原因），所以单独记下它的位置 */
   var REVIVAL_INDEX = boot.hosted ? 0 : -1
 
+  /* 资料与社区：不属于任何一台服务器，收在页面底部一行小链接里 */
+  var RESOURCE_LINKS = [
+    ['DDON-DPS研究所 Wiki（技能表来源）', boot.links.wiki],
+    ['Nexus Mods', boot.links.mods],
+  ]
+
   function legacyRows(payload){
     if (!Array.isArray(payload)) return []
     return payload.map(function(r){
-      return { name: String(r.Name || 'World'), brief: String(r.Brief || '').trim(), players: Number(r.LoginNum) || 0, capacity: Number(r.MaxLoginNum) || 0 }
+      return { name: String(r.Name || 'World'), brief: String(r.Brief || '').trim(), players: Number(r.LoginNum) || 0,
+               capacity: Number(r.MaxLoginNum) || 0, traffic: String(r.TrafficName || '').trim(),
+               address: String(r.Addr || ''), port: Number(r.Port) || 0 }
     })
+  }
+
+  /** 一张卡片的链接行；没有链接就返回空串。 */
+  function cardLinks(links){
+    if (!links || links.length === 0) return ''
+    var html = '<div class="chipRow">'
+    for (var i = 0; i < links.length; i++){
+      if (!links[i][1]) continue
+      html += '<a class="chip" href="' + esc(links[i][1]) + '" target="_blank" rel="noreferrer">' + esc(links[i][0]) + ' ↗</a>'
+    }
+    return html + '</div>'
+  }
+
+  /** 一行「键 值」的元信息，与插件的 ddonHub_meta 同一版式。 */
+  function metaRow(key, value){
+    if (!value) return ''
+    return '<div class="meta"><span class="metaKey">' + esc(key) + '</span><span>' + value + '</span></div>'
   }
 
   function renderLive(boxes){
     var html = ''
     for (var i = 0; i < boxes.length; i++){
       var b = boxes[i]
-      html += '<div class="card"><div class="cardHead"><span class="cardName">' + esc(b.label) + '</span>'
-      html += '<span class="spacer" style="flex:1 1 auto"></span>'
+      /*
+       * 卡片的链接行原样渲染，不做取舍。
+       *
+       * 这里曾经调用过 links.shift()，本意是"官网已经在副标题里出现了，别重复"。
+       * 但那是渲染层替用户删数据——插件的每张卡片第一项就是官网，去掉反而少了一个入口。
+       */
+      var links = b.links || []
+
+      html += '<div class="card"><div class="cardHead">'
+      html += '<span class="cardName">' + esc(b.label) + '</span>'
+      html += '<span class="cardSub">' + esc(b.subtitle || '') + '</span>'
       html += b.online === null ? '<span class="tag err">取不到</span>' : '<span class="tag ok">实时</span>'
       html += '</div>'
+
       if (b.online === null){
         html += '<div class="cardSub">' + esc(b.note || '读取失败') + '</div>'
       } else {
         html += '<div><span class="big">' + esc(String(b.online)) + '</span><span class="unit">人在线</span></div>'
-        if (b.bars && b.bars.length > 0){
-          html += '<div class="bars">'
-          for (var k = 0; k < b.bars.length; k++) html += '<span class="bar">' + esc(b.bars[k]) + '</span>'
+        if (b.chips && b.chips.length > 0){
+          html += '<div class="chipRow">'
+          for (var k = 0; k < b.chips.length; k++) html += '<span class="barChip">' + b.chips[k] + '</span>'
           html += '</div>'
         }
-        if (b.note) html += '<div class="cardSub">' + esc(b.note) + '</div>'
+        if (b.meta && b.meta.length > 0){
+          for (var m = 0; m < b.meta.length; m++) html += metaRow(b.meta[m][0], b.meta[m][1])
+        }
+        if (b.note) html += metaRow(b.noteKey || '上游更新于', esc(b.note))
       }
-      if (b.url) html += '<div class="cardSub" style="margin-top:6px"><a href="' + esc(b.site || b.url) + '" target="_blank" rel="noreferrer">打开官网 ↗</a></div>'
+      html += cardLinks(links)
       html += '</div>'
     }
     /*
@@ -444,12 +510,12 @@ const JS = String.raw`
      * 本地文件版没有服务端可用，只能直连，因此这张卡片用来说明取不到的原因。
      */
     if (REVIVAL_INDEX < 0){
-      html += '<div class="card"><div class="cardHead"><span class="cardName">DDON Revival</span>'
-      html += '<span class="spacer" style="flex:1 1 auto"></span><span class="tag warn">要用电脑版</span></div>'
+      html += '<div class="card"><div class="cardHead">'
+      html += '<span class="cardName">DDON Revival</span><span class="cardSub">live.ddon.org · 最大私服</span>'
+      html += '<span class="tag warn">要用电脑版</span></div>'
       html += '<div class="cardSub">它的接口只允许自家网页读取（CORS），本页取不到。技能表不受影响，照常可查。</div>'
-      html += '<div class="cardSub" style="margin-top:6px"><a href="' + esc(boot.links.revival) + '" target="_blank" rel="noreferrer">打开官网 ↗</a>'
-      html += '　<a href="' + esc(boot.links.revivalWiki) + '" target="_blank" rel="noreferrer">官方 Wiki</a>'
-      html += '　<a href="' + esc(boot.links.revivalHowToPlay) + '" target="_blank" rel="noreferrer">怎么玩</a></div>'
+      html += cardLinks([['官网', boot.links.revival], ['排行榜', boot.links.revivalLeaderboard],
+                         ['官方 Wiki', boot.links.revivalWiki], ['怎么玩', boot.links.revivalHowToPlay]])
       html += '</div>'
     }
     el('live').innerHTML = html
@@ -489,45 +555,34 @@ const JS = String.raw`
     host.innerHTML = html
   }
 
-  /* 官网入口：三台私服各一行，外加 Discord 与 wiki。
-     手机版取不到公号，所以对这些站点的入口只能靠链接。 */
+  /*
+   * 资料与社区。
+   *
+   * 各服务器自己的入口已经放进对应卡片的链接行（与电脑版、插件一致），
+   * 所以这里只剩不属于任何一台服务器的两个：技能表的来源 wiki，和 Mod 站。
+   * 它们落在页脚那一行，不再单独占一个区块。
+   */
   function renderLinks(){
-    var groups = [
-      { name: 'DDON Revival', items: [
-        ['官网', boot.links.revival], ['排行榜', boot.links.revivalLeaderboard],
-        ['官方 Wiki', boot.links.revivalWiki], ['怎么玩', boot.links.revivalHowToPlay],
-      ] },
-      { name: 'LegacyDDON', items: [
-        ['官网', boot.links.legacy], ['公告', boot.links.legacyNews], ['地图', boot.links.legacyMap],
-        ['物品检索', boot.links.legacyItemSearch], ['板任务', boot.links.legacyBoardQuests],
-      ] },
-      { name: 'Dogma Rising', items: [
-        ['官网', boot.links.rising], ['Live News（Discord）', boot.links.risingNews],
-        ['怎么玩', boot.links.risingHowToPlay], ['地图', boot.links.risingMap], ['Discord', boot.links.risingDiscord],
-      ] },
-      { name: '资料与社区', items: [
-        ['DDON-DPS研究所 Wiki（技能表来源）', boot.links.wiki],
-        ['Mod（Nexus）', boot.links.mods],
-      ] },
-    ]
+    var host = el('links')
+    if (host === null) return
     var html = ''
-    for (var i = 0; i < groups.length; i++){
-      var g = groups[i]
-      html += '<div class="card"><div class="cardHead"><span class="cardName">' + esc(g.name) + '</span></div>'
-      html += '<div class="links">'
-      for (var k = 0; k < g.items.length; k++){
-        if (!g.items[k][1]) continue
-        html += '<a href="' + esc(g.items[k][1]) + '" target="_blank" rel="noreferrer">' + esc(g.items[k][0]) + ' ↗</a>'
-      }
-      html += '</div></div>'
+    for (var i = 0; i < RESOURCE_LINKS.length; i++){
+      if (!RESOURCE_LINKS[i][1]) continue
+      if (html !== '') html += '　'
+      html += '<a class="chip" href="' + esc(RESOURCE_LINKS[i][1]) + '" target="_blank" rel="noreferrer">' + esc(RESOURCE_LINKS[i][0]) + ' ↗</a>'
     }
-    el('links').innerHTML = html
+    host.innerHTML = html
+  }
+
+  /* 各卡片共用的底：标签、副标题、官网链接组，取到数字后再补 chips / meta。 */
+  function baseBox(n, note){
+    return { label: n.label, subtitle: n.subtitle, online: null, links: n.links, site: n.site, note: note }
   }
 
   function fetchLive(){
     var boxes = []
     var pending = NOTES.length
-    renderLive(NOTES.map(function(n){ return { label: n.label, online: null, site: n.site, note: '读取中…' } }))
+    renderLive(NOTES.map(function(n){ return baseBox(n, '读取中…') }))
     NOTES.forEach(function(n){
       var done = function(box){ boxes.push(box); pending -= 1; if (pending === 0) renderLive(boxes.slice()) }
       fetch(n.url, { cache: 'no-store' }).then(function(r){
@@ -537,20 +592,37 @@ const JS = String.raw`
         if (n.type === 'worlds'){
           var rows = legacyRows(payload)
           var total = rows.reduce(function(s, r){ return s + r.players }, 0)
-          done({ label: n.label, online: total, site: n.site, bars: rows.map(function(r){ return r.name + r.brief.replace(/^World\s*/i, ' ') + ' ' + r.players + '/' + r.capacity }) })
+          var box = baseBox(n)
+          box.online = total
+          /* 与插件同一版式：世界 / 服务器 / 负载 各一行 */
+          box.meta = [
+            ['世界', rows.map(function(r){
+              return esc(r.name + r.brief.replace(/^World\s*/i, ' ')) + ' · ' + r.players + '/' + r.capacity + ' 人'
+            }).join('　')],
+          ]
+          var first = rows[0]
+          if (first && first.address){
+            box.meta.push(['服务器', '<span class="mono">' + esc(first.address + (first.port ? ':' + first.port : '')) + '</span>'])
+          }
+          var traffic = rows.map(function(r){ return r.traffic }).filter(function(t){ return t !== '' })
+          if (traffic.length > 0) box.meta.push(['负载', esc(traffic.join('　'))])
+          done(box)
         } else if (n.type === 'proxy'){
           /* Worker 代理已经校验过形状，这里只取总数与各频道 */
           if (!payload || payload.ok !== true) throw new Error((payload && payload.error) || '代理返回失败')
           var online = Number(payload.online)
           if (!isFinite(online)) throw new Error('代理返回里没有 online')
-          done({
-            label: n.label, online: online, site: n.site,
-            bars: (payload.channels || []).map(function(c){ return 'CH' + c.channel + ' ' + c.players }),
-          })
+          var box2 = baseBox(n)
+          box2.online = online
+          box2.chips = (payload.channels || []).map(function(c){ return 'CH' + c.channel + ' <b>' + c.players + '</b>' })
+          done(box2)
         } else {
           var online2 = Number(payload && payload.online)
           if (!isFinite(online2)) throw new Error('接口里没有 online 字段')
-          done({ label: n.label, online: online2, site: n.site, note: payload.updated ? '上游更新于 ' + payload.updated : '' })
+          var box3 = baseBox(n)
+          box3.online = online2
+          if (payload.updated) box3.note = payload.updated
+          done(box3)
         }
       }).catch(function(e){
         /* 代理不可用时要说清原因：Revival 的接口只允许自家网页读取，这个页面靠
@@ -560,7 +632,9 @@ const JS = String.raw`
         if (n.type === 'proxy'){
           note = '取不到（' + e.message + '）——它的接口只允许自家网页读取，本页靠服务端代理取数'
         }
-        done({ label: n.label, online: null, site: n.site, note: note })
+        var box4 = baseBox(n, note)
+        box4.noteKey = n.type === 'proxy' ? '取数失败' : '读取失败'
+        done(box4)
       })
     })
   }
@@ -821,9 +895,6 @@ ${ASSETS.favicon === null || hosted ? '' : `<link rel="apple-touch-icon" href="$
   <h2>私服在线</h2>
   <div class="grid" id="live"></div>
 
-  <h2>官网入口</h2>
-  <div class="grid" id="links"></div>
-
   <h2>职业技能数据</h2>
   <input id="search" placeholder="搜索技能名、中文名或备注">
   <div class="jobs" id="jobs"></div>
@@ -852,6 +923,7 @@ ${ASSETS.favicon === null || hosted ? '' : `<link rel="apple-touch-icon" href="$
       hosted ? '，本站内容随作者更新，刷新页面即为最新。' : '，烘在本文件里，不会自动更新。'
     }</span></div>
     <div class="footRow"><span>译名</span><span>来自私服汉化包索引，非官方译名；版权归原汉化组所有。</span></div>
+    <div class="footRow"><span>资料与社区</span><span id="links"></span></div>
     <div class="footRow"><span>在线人数</span><span>LegacyDDON 与 Dogma Rising 由你的浏览器直接读取；DDON Revival 的接口禁止跨站读取，本页取不到。</span></div>
     <div class="footRow"><span>你的改动</span><span>只存在你这台设备的浏览器里，不会上传，别人也看不到。</span></div>
     ${
