@@ -61,13 +61,23 @@ async function main() {
       const rows = boot.jobs.reduce((n, j) => n + (j.summaryRows || []).length, 0)
       const cells = boot.jobs.reduce((n, j) => n + (j.details || []).reduce((m, d) => m + (d.cells || []).length, 0), 0)
       console.log('   职业:', boot.jobs.length, '| 详表:', details, '| 行:', rows, '| 单元格:', cells)
-      console.log('   hosted:', boot.hosted, '| includeRevival:', boot.includeRevival, '| 入口:', Object.keys(boot.links).length)
+      console.log('   hosted:', boot.hosted, '| 入口:', Object.keys(boot.links).length)
       if (boot.jobs.length !== 11) problems.push(`职业数是 ${boot.jobs.length}，应为 11`)
       if (details !== 275) problems.push(`详表数是 ${details}，应为 275`)
       if (boot.hosted !== true) problems.push('hosted 标记不是 true')
-      if (boot.includeRevival !== false) problems.push('includeRevival 不是 false（网站版应隐藏 Revival 卡片）')
+      if (boot.includeRevival !== undefined) {
+        problems.push('还有 includeRevival 字段——那张卡片现在两种模式都显示，只差措辞')
+      }
     }
   }
+
+  /*
+   * 三个私服都要能出现。Revival 取不到数字是它的接口限制，但卡片必须在，
+   * 否则看起来像数据不全而不是一个说清了的限制。
+   */
+  if (!home.body.includes('DDON Revival')) problems.push('页面里没有 DDON Revival 卡片')
+  if (!home.body.includes('只允许自家网页读取')) problems.push('Revival 卡片没有说明取不到的原因')
+  if (!home.body.includes('min-width:900px')) problems.push('页面没有宽屏媒体查询——电脑上会是一列卡片')
 
   const scripts = [...home.body.matchAll(/<script(?:\s[^>]*)?>([\s\S]*?)<\/script>/g)].map((m) => m[1])
   let scriptOk = true
