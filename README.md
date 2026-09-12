@@ -72,16 +72,33 @@ node build/modes-check.js
 python build/site-check.py
 ```
 
-## 部署（Cloudflare Pages，走 Git）
+## 部署（Cloudflare Workers 静态资源）
 
-Cloudflare 侧配置：
+线上地址：**https://ddon-hub.3605369480.workers.dev**
 
 | 项 | 值 |
 |---|---|
-| Build command | **留空** |
-| Build output directory | `dist/site` |
+| 仓库 | `github.com/CHENKEHAN001/ddon-hub`（私有） |
+| Cloudflare 侧 Build command | **留空** |
+| Cloudflare 侧 Deploy command | `npx wrangler deploy`（默认） |
+| 静态目录 | 由根目录的 `wrangler.jsonc` 指定为 `./dist/site` |
 
-产物已经在仓库里，所以**不需要任何构建命令**。每次更新只需本地重新生成、提交、推送，Cloudflare 自动发布，地址不变。
+产物已经提交在仓库里，所以**不需要任何构建命令**。每次更新只需本地重新生成、`git commit`、`git push`，Cloudflare 自动发布，地址不变。
+
+**注意这个流程不是老的 Pages 流程。** 新版 Workers Builds 的 Deploy command 是
+`npx wrangler deploy`，它需要仓库里有 `wrangler.jsonc` 指定 `assets.directory`——
+没有这个文件部署会失败。`_headers` 由 wrangler 当配置解析（因此它**不会**出现在
+上传的资源列表里，这是正常的），实测线上 `x-robots-tag` 与 `referrer-policy` 都正确下发。
+
+部署后验证：
+
+```bash
+node build/live-check.js                      # 默认查线上地址
+node build/live-check.js https://别的地址      # 查指定地址
+```
+
+检查根路径、数据完整性、内联脚本可解析、响应头是否按 `_headers` 下发、
+`robots.txt`、以及两个在线人数接口在真实 HTTPS 源下能否取到。
 
 ## 依赖（构建期，不是运行期）
 
