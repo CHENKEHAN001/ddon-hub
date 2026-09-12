@@ -159,9 +159,34 @@ async function main() {
     if (acao !== '*') problems.push(`${name} 的 ACAO 不是 *，访客浏览器会被拦`)
   }
 
-  /* --- 6. 错误路径 --- */
+  /* --- 6. Web Analytics 的统计脚本 --- */
+  /*
+   * 断言强度经过一次反转：起初以为 Analytics 没开，所以设计成"只报告、不判失败"；
+   * 实测线上页面**已经带 beacon**（带 integrity 的版本化路径），且面板里已有数据，
+   * 于是这里改成**硬断言**——既然它在工作，坏掉就该被发现。
+   *
+   * 用 --no-analytics 可以跳过（例如临时关掉统计时）。
+   */
+  if (!process.argv.includes('--no-analytics')) {
+    console.log('\n6) Web Analytics 统计脚本')
+    const hasBeacon = home.body.includes('beacon.min.js') || home.body.includes('static.cloudflareinsights.com')
+    console.log('   beacon.min.js:', hasBeacon ? '在' : '**缺失**')
+    if (!hasBeacon) problems.push('页面里没有 Web Analytics 的 beacon 脚本')
+    if (hasBeacon) {
+      const hasIntegrity = /beacon\.min\.js[^>]*integrity/.test(home.body)
+      const hasToken = home.body.includes('data-cf-beacon')
+      console.log('   integrity 属性:', hasIntegrity ? '有' : '无', '| data-cf-beacon:', hasToken ? '有' : '无')
+      if (!hasToken) problems.push('beacon 脚本缺少 data-cf-beacon，统计不会上报')
+    }
+    /* 自动注入的前提：Cloudflare 要能改写响应体 */
+    const cc = home.headers['cache-control'] || ''
+    if (/no-transform/i.test(cc)) problems.push('响应头含 no-transform，Cloudflare 无法注入 beacon（统计会静默失效）')
+    console.log('   cache-control:', cc, /no-transform/i.test(cc) ? '**含 no-transform**' : '(不含 no-transform，可注入)')
+  }
+
+  /* --- 7. 错误路径 --- */
   const missing = await get(SITE + '/no-such-page')
-  console.log('\n6) 未知路径:', missing.status)
+  console.log('\n7) 未知路径:', missing.status)
   if (missing.status !== 404) problems.push(`未知路径返回 ${missing.status}，应为 404`)
 
   console.log()
@@ -170,7 +195,7 @@ async function main() {
     for (const row of problems) console.error('   ' + row)
     process.exit(1)
   }
-  console.log('OK: 线上站点根路径、数据、响应头、robots.txt、在线接口全部正常')
+  console.log('OK: 线上站点根路径、数据、响应头、robots.txt、在线接口、统计脚本全部正常')
 }
 
 main().catch((error) => {
