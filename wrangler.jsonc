@@ -25,5 +25,18 @@
     "not_found_handling": "404-page",
     // 静态资源优先：存在同名文件就直接返回，不进 Worker 脚本。
     "run_worker_first": false
-  }
+  },
+
+  // 自定义域名：让站点从 ddon-hub.com 打开，不再依赖 workers.dev。
+  //
+  // 为什么必须绑这里而不是面板手动加：workers.dev 这个共享域名在中国大陆被 DNS 污染，
+  // 访客必须挂梯子才打得开；换成自己的域名才可能直连。
+  //
+  // custom_domain: true 的含义是"Cloudflare 全权代理这个主机名"——它会自己建 DNS 记录
+  // 并签发 HTTPS 证书，所以不需要我们手动配记录。代价是同一主机名上不能已存在 CNAME 记录。
+  //
+  // 前提：域名的 DNS 服务器已经是 Cloudflare 的（阿里云侧改过），否则这里的部署会失败。
+  "routes": [
+    { "pattern": "ddon-hub.com", "custom_domain": true }
+  ]
 }
