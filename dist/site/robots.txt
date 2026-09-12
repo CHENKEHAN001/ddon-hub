@@ -1,9 +1,11 @@
-# 不要收录本站：技能表来自第三方整理，译名来自汉化组，属于二次分发。
-# 有链接的人可以正常访问，但不希望出现在搜索结果里。
+# 欢迎搜索引擎收录：本站只是把公开资料整合成一个便于查阅的界面。
+# 技能表来自 DDON-DPS研究所 Wiki*（公开站点），译名来自流传中的汉化包。
 User-agent: *
-Disallow: /
+Allow: /
 
-# 常见的 AI 训练爬虫也一并拒绝
+# 唯一拒绝的是拿内容去训练模型的爬虫。
+# 说明：Cloudflare 的 AI Crawl Control 会在本文件前面追加一段托管内容，
+# 同样声明 ai-train=no，两者一致。
 User-agent: GPTBot
 Disallow: /
 
@@ -11,4 +13,10 @@ User-agent: CCBot
 Disallow: /
 
 User-agent: Google-Extended
+Disallow: /
+
+User-agent: Bytespider
+Disallow: /
+
+User-agent: ClaudeBot
 Disallow: /

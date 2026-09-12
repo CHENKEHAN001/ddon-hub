@@ -30,18 +30,28 @@ const ROOT = path.join(__dirname, '..')
 const OUT_DIR = path.join(ROOT, 'dist', 'site')
 
 /**
- * Crawler policy.
+ * 爬虫策略：欢迎收录，只挡 AI 训练爬虫。
  *
- * Deliberately permissive for people and closed for indexers: the point is that a
- * friend who has the URL can open it, not that it shows up in a search result for
- * someone else's content.
+ * 这份 `robots.txt` 会和 Cloudflare 的「AI Crawl Control」托管段落合并下发——
+ * 实测线上是 Cloudflare 那段在前、这段在后。两段的意图必须一致，否则同一个
+ * `User-agent: *` 出现两条相反规则，行为不确定。
+ *
+ * 曾经这里写的是 `Disallow: /`（整站不收录），理由是"技能表是别人的、译名是汉化组的，
+ * 不该被索引"。用户否掉了这个判断，并且是对的：**这些原始资料本来就是公开的**——
+ * DDON-DPS研究所 wiki 是公开站点，汉化包的译名也早已在流传。把公开内容私有化没有根据，
+ * 而整合与翻译恰恰是应该被检索到的。
+ *
+ * 所以现在的立场是：搜索引擎随便收，AI 训练爬虫拒绝（`ai-train=no`，与 Cloudflare 的
+ * 默认策略同向，那一段还会顺手挡掉 Amazonbot / Bytespider / ClaudeBot 等）。
  */
-const ROBOTS = `# 不要收录本站：技能表来自第三方整理，译名来自汉化组，属于二次分发。
-# 有链接的人可以正常访问，但不希望出现在搜索结果里。
+const ROBOTS = `# 欢迎搜索引擎收录：本站只是把公开资料整合成一个便于查阅的界面。
+# 技能表来自 DDON-DPS研究所 Wiki*（公开站点），译名来自流传中的汉化包。
 User-agent: *
-Disallow: /
+Allow: /
 
-# 常见的 AI 训练爬虫也一并拒绝
+# 唯一拒绝的是拿内容去训练模型的爬虫。
+# 说明：Cloudflare 的 AI Crawl Control 会在本文件前面追加一段托管内容，
+# 同样声明 ai-train=no，两者一致。
 User-agent: GPTBot
 Disallow: /
 
@@ -50,16 +60,25 @@ Disallow: /
 
 User-agent: Google-Extended
 Disallow: /
+
+User-agent: Bytespider
+Disallow: /
+
+User-agent: ClaudeBot
+Disallow: /
 `
 
 /**
- * Netlify / Cloudflare Pages both read this file.
+ * 自定义响应头。
  *
- * `X-Robots-Tag` is the header equivalent of the robots.txt rule and also covers
- * crawlers that fetch a page without reading robots.txt first.
+ * 曾经这里下发 `X-Robots-Tag: noindex, nofollow, noarchive`，用来强制不收录。
+ * 那个策略已按用户要求推翻（理由见上面 ROBOTS 的注释），所以这一条去掉了——
+ * 留着它会和 `Allow: /` 直接矛盾，而且响应头优先级高于 robots.txt。
+ *
+ * `Referrer-Policy` 保留：它只影响跳转到第三方站点时带不带来源页地址，
+ * 与收录无关，属于纯粹的隐私最小化。
  */
 const HEADERS = `/*
-  X-Robots-Tag: noindex, nofollow, noarchive
   Referrer-Policy: no-referrer
 `
 
@@ -69,8 +88,8 @@ const README = `# DDON 资料站 · 网站版
 这个目录就是可以直接上传的静态站点，只有三个文件：
 
 - \`index.html\` —— 整站，数据、样式、脚本全在里面（${(fs.existsSync(path.join(ROOT, 'dist', 'DDON资料站-手机版.html')) ? (fs.statSync(path.join(ROOT, 'dist', 'DDON资料站-手机版.html')).size / 1024).toFixed(0) : '?')} KB 左右）
-- \`robots.txt\` —— 请求搜索引擎不要收录
-- \`_headers\` —— 加上 \`X-Robots-Tag\`，防止不读 robots.txt 的爬虫
+- \`robots.txt\` —— 欢迎搜索引擎收录，但拒绝 AI 训练爬虫
+- \`_headers\` —— 只下发 \`Referrer-Policy\`（收录策略已改为允许，故不再有 X-Robots-Tag）
 
 ## 部署（三种任选，都不需要域名）
 

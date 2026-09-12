@@ -102,18 +102,34 @@ async function main() {
   })
   console.log('   内联脚本:', scripts.length, '段，解析', scriptOk ? '通过' : '**失败**')
 
-  /* --- 3. 响应头（_headers 是否生效）--- */
+  /* --- 3. 响应头 --- */
   console.log('\n3) 响应头')
-  for (const [key, want] of [['x-robots-tag', 'noindex'], ['referrer-policy', 'no-referrer']]) {
-    const value = home.headers[key]
-    console.log(`   ${key}: ${value === undefined ? '**缺失**' : value}`)
-    if (value === undefined || !value.includes(want)) problems.push(`${key} 没有按 _headers 下发`)
+  /*
+   * 这里只查 Referrer-Policy。
+   *
+   * 早先还查 `X-Robots-Tag: noindex`，那是"整站不收录"策略的一部分；该策略已按用户要求
+   * 推翻（原始资料本就公开，不该私有化），所以这条断言必须一起去掉——留着它会让检查
+   * 反过来逼着我们保持不收录。
+   */
+  const referrer = home.headers['referrer-policy']
+  console.log(`   referrer-policy: ${referrer === undefined ? '**缺失**' : referrer}`)
+  if (referrer === undefined || !referrer.includes('no-referrer')) problems.push('referrer-policy 没有按 _headers 下发')
+  if (home.headers['x-robots-tag'] !== undefined) {
+    problems.push(`x-robots-tag 还在（${home.headers['x-robots-tag']}）——那会阻止收录，与 Allow: / 矛盾`)
   }
 
   /* --- 4. robots.txt --- */
   const robots = await get(SITE + '/robots.txt', 'text/plain')
-  console.log('\n4) robots.txt:', robots.status, '|', robots.body.split('\n')[0])
-  if (robots.status !== 200 || !robots.body.includes('Disallow: /')) problems.push('robots.txt 内容不对')
+  console.log('\n4) robots.txt:', robots.status)
+  if (robots.status !== 200) problems.push('robots.txt 取不到')
+  if (!robots.body.includes('Allow: /')) problems.push('robots.txt 没有 Allow: /（搜索引擎应被允许收录）')
+  if (/^User-agent: \*\s*\nDisallow: \/\s*$/m.test(robots.body)) {
+    problems.push('robots.txt 里还有针对 * 的 Disallow: /，与 Allow: / 矛盾')
+  }
+  if (!robots.body.includes('ai-train=no') && !robots.body.includes('GPTBot')) {
+    problems.push('robots.txt 没有拒绝 AI 训练爬虫')
+  }
+  console.log('   AI 训练爬虫:', robots.body.includes('ai-train=no') ? '已拒绝（Cloudflare 托管段）' : (robots.body.includes('GPTBot') ? '已拒绝（本文件）' : '**未拒绝**'))
 
   /* --- 5. 两个跨域友好的状态接口（模拟访客浏览器）--- */
   console.log('\n5) 访客浏览器能否取到在线人数')

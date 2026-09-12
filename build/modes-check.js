@@ -33,7 +33,7 @@ const rows = [
   ['Revival 卡片：手机措辞', phone.html.includes('要用电脑版'), web.html.includes('要用电脑版')],
   ['Revival 卡片：网站措辞', phone.html.includes('本站取不到'), web.html.includes('本站取不到')],
   ['页脚「完全离线」', phone.html.includes('完全离线，可存到手机里直接打开'), web.html.includes('完全离线，可存到手机里直接打开')],
-  ['页脚「出处与用途」', phone.html.includes('请勿用于商业用途'), web.html.includes('请勿用于商业用途')],
+  ['页脚「出处与用途」', phone.html.includes('仅供学习交流'), web.html.includes('仅供学习交流')],
   ['页脚「你的改动不上传」', phone.html.includes('不会上传，别人也看不到'), web.html.includes('不会上传，别人也看不到')],
   ['技能数据一致', phone.boot.jobs.length, web.boot.jobs.length],
   ['入口数量一致', Object.keys(phone.boot.links).length, Object.keys(web.boot.links).length],
@@ -78,7 +78,7 @@ if (!phone.html.includes('要用电脑版')) problems.push('手机版缺少 Revi
  */
 if (!phone.html.includes('完全离线，可存到手机里直接打开')) problems.push('手机版缺少"本文件"说明')
 if (web.html.includes('完全离线，可存到手机里直接打开')) problems.push('网站版不应保留"存到手机里"文案')
-if (!web.html.includes('请勿用于商业用途')) problems.push('网站版缺少出处与用途声明')
+if (!web.html.includes('仅供学习交流')) problems.push('网站版缺少出处与用途声明')
 if (phone.boot.jobs.length !== web.boot.jobs.length) problems.push('两个版本的技能数据不一致')
 if (Object.keys(phone.boot.links).length !== Object.keys(web.boot.links).length) problems.push('两个版本的链接表不一致')
 

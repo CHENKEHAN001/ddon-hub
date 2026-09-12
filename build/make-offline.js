@@ -934,8 +934,13 @@ ${ASSETS.favicon === null || hosted ? '' : `<link rel="apple-touch-icon" href="$
     <div class="footRow"><span>在线人数</span><span>LegacyDDON 与 Dogma Rising 由你的浏览器直接读取；DDON Revival 的接口禁止跨站读取，本页取不到。</span></div>
     <div class="footRow"><span>你的改动</span><span>只存在你这台设备的浏览器里，不会上传，别人也看不到。</span></div>
     ${
+      /*
+       * 出处声明。早先这里写的是「请勿公开分发或用于商业用途」，隐含"这是私下传阅的东西"。
+       * 用户否掉了那个立场：技能表来自公开 wiki、译名来自流传中的汉化包，**原始资料本就是公开的**，
+       * 把整合结果藏起来没有根据。现在只保留署名与非商业声明，不再要求保密。
+       */
       hosted
-        ? '<div class="footRow"><span>出处与用途</span><span>本项目只是把公开资料整合成一个方便查阅的界面，仅供学习交流，请勿用于商业用途。如权利人认为不妥，请联系删除。</span></div>'
+        ? '<div class="footRow"><span>出处与用途</span><span>非官方粉丝站点，与 Capcom 及任何私服运营方无关。技能表版权归 DDON-DPS研究所 Wiki* 作者，译名版权归原汉化组，本站只是整合与呈现。仅供学习交流，请勿用于商业用途。</span></div>'
         : '<div class="footRow"><span>本文件</span><span>完全离线，可存到手机里直接打开，不需要电脑、不需要联网。</span></div>'
     }
   </div>
