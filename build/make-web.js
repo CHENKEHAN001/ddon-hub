@@ -1,16 +1,20 @@
 /**
  * Build step: the deployable website.
  *
- * Same page as the phone build, three differences that only matter once it lives
- * on a public origin:
+ * Same page as the phone build, with three differences that only matter once it
+ * lives on a public origin:
  *
- *   1. It is `index.html` in a folder ready to upload, not a file to carry around.
+ *   1. It is `index.html` in a folder ready to deploy, not a file to carry around.
  *   2. `robots.txt` and `_headers` ask search engines not to index it. The skill
  *      table is someone else's work and the translations are a fan group's; a
  *      public URL is a different thing from a file passed around in private.
- *   3. `includeRevival: false` — Revival's API only accepts its own origin, so a
- *      card that can never show a number is worse than no card. Its links stay in
- *      the 官网入口 block.
+ *   3. Wording differs — the phone build talks about carrying a file around, this
+ *      one about always being current.
+ *
+ * The content is identical, Revival card included. An earlier version dropped that
+ * card here on the grounds that its API can never be read from a third-party origin;
+ * the result looked like a missing server rather than an explained limitation, so it
+ * is back with a "本站取不到" label.
  *
  * Run with: node build/make-web.js
  */
@@ -133,7 +137,7 @@ node build/make-web.js      # 重新生成 dist/site/
 function main() {
   fs.mkdirSync(OUT_DIR, { recursive: true })
 
-  const html = buildPage({ hosted: true, includeRevival: false })
+  const html = buildPage({ hosted: true })
   const boot = checkPage(html, 'web')
 
   fs.writeFileSync(path.join(OUT_DIR, 'index.html'), html, 'utf8')
@@ -144,7 +148,7 @@ function main() {
   const kb = (Buffer.byteLength(html) / 1024).toFixed(0)
   console.log(`  index.html  ${kb} KB   (技能表 ${manifest.capturedAt})`)
   console.log(`  robots.txt / _headers / 部署说明.md`)
-  console.log(`  jobs ${boot.jobs.length}, links ${Object.keys(boot.links).length}, Revival 卡片: ${boot.includeRevival ? '有' : '已隐藏'}, hosted=${boot.hosted}`)
+  console.log(`  jobs ${boot.jobs.length}, links ${Object.keys(boot.links).length}, hosted=${boot.hosted}`)
   console.log('  -> ' + OUT_DIR)
 }
 

@@ -87,7 +87,46 @@ input{min-height:34px;padding:6px 10px}
 .links{display:flex;flex-direction:column;gap:2px;margin-top:2px}
 .links a{display:block;padding:7px 2px;border-top:1px solid var(--line);font-size:13.5px}
 .links a:first-child{border-top:0}
-`
+
+/* ---------------------------------------------------------------------------
+   宽屏：换成表格，卡片隐藏。
+   手机上卡片好点，307 行五个数值列在电脑上还是表格好扫。两边用同一份数据、
+   同一套排序，所以只有显示形式不同，不会一边有一边没有。
+   --------------------------------------------------------------------------- */
+.wideWrap{display:none}
+@media (min-width:900px){
+  .wrap{max-width:1500px;padding:14px 20px 60px}
+  #skills{display:none}
+  .wideWrap{display:block}
+  .jobs{gap:5px;margin:6px 0 10px}
+  .job{padding:3px 12px;min-height:26px;font-size:12.5px}
+  #search{width:240px!important;margin-top:0}
+  .toolbar{margin-bottom:8px}
+  table.wide{border-collapse:separate;border-spacing:0;width:100%;font-size:12.5px}
+  table.wide thead th{position:sticky;top:0;z-index:1;background:var(--panel);border-bottom:1px solid var(--line);padding:8px 10px;text-align:left;font-weight:600;white-space:nowrap;color:var(--dim)}
+  table.wide thead th.num{text-align:right}
+  table.wide thead th.sortable{cursor:pointer;user-select:none}
+  table.wide thead th.sortable:hover{color:var(--fg)}
+  table.wide thead th .caret{font-size:9px}
+  table.wide tbody td{padding:7px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+  table.wide tbody td.num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+  table.wide tbody tr{cursor:pointer}
+  table.wide tbody tr:hover{background:var(--panel2)}
+  table.wide tbody tr.on{background:var(--panel2)}
+  table.wide td.skillName{white-space:nowrap}
+  table.wide td.skillName .ja{color:var(--dim);font-size:11.5px;margin-left:8px}
+  table.wide td.skillNote{color:var(--dim);font-size:11.5px;min-width:220px;word-break:break-word}
+  table.wide td.skillNote:hover{color:var(--fg)}
+  /* 详表在宽屏上用两列排，读起来比一长条舒服 */
+  .detailGrid{grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:6px 24px}
+  .kv{grid-template-columns:max-content minmax(0,1fr);gap:2px 12px;border-top:0;padding:2px 0}
+  .kvKey{font-size:11.5px}
+  .kvVal{font-size:12px}
+  .kvVal.editable{padding:0;margin:0;background:transparent}
+  .kvVal.editable:hover{background:rgba(127,127,127,.14);border-radius:4px}
+  .footRow{display:flex}
+  .footRow>span:first-child{font-weight:400;color:var(--dim);margin-right:8px;flex:none;min-width:64px}
+}`
 
 /* ------------------------------------------------------------------ client JS */
 
@@ -180,9 +219,10 @@ const JS = String.raw`
     el('jobs').innerHTML = html
   }
 
-  function renderSkills(){
+  /** 当前职业、按搜索词过滤、按当前排序键排好的行。两种视图共用。 */
+  function visibleRows(){
     var job = currentJob()
-    if (job === null){ el('skills').innerHTML = '<div class="empty">没有职业数据</div>'; return }
+    if (job === null) return null
     var rows = (job.summaryRows || []).slice()
     var needle = state.query.trim().toLowerCase()
     if (needle !== ''){
@@ -205,32 +245,90 @@ const JS = String.raw`
         return bv - av
       })
     }
+    return { job: job, rows: rows }
+  }
+
+  /** 备注单元格的内容，卡片和表格共用。 */
+  function noteHtml(r){
+    var shown = noteText(r)
+    if (shown !== '') return esc(shown) + (r.noteEdited ? ' <span class="tag ok">改</span>' : '')
+    if ((r.note || '') !== '') return '<span class="pending">待译</span>'
+    return ''
+  }
+
+  /** 技时间：能取出数字就统一成「1.08s」这种形式。注释里也不能用反引号，见文件头说明。 */
+  function castText(r){
+    var secs = firstNumber(r.cast)
+    return secs === null ? esc(r.cast || '—') : fmt(secs, 2) + 's'
+  }
+
+  function renderSkills(){
+    var view = visibleRows()
+    if (view === null){ el('skills').innerHTML = '<div class="empty">没有职业数据</div>'; return }
+    var rows = view.rows
 
     var html = ''
     for (var i = 0; i < rows.length; i++){
       var r = rows[i]
-      var shown = noteText(r)
       var isOpen = state.selected !== null && (state.selected.ja === r.ja || state.selected.zh === r.zh)
-      var note = ''
-      if (shown !== ''){
-        note = esc(shown) + (r.noteEdited ? ' <span class="tag ok">改</span>' : '')
-      } else if ((r.note || '') !== ''){
-        note = '<span class="pending">待译</span>'
-      }
+      var note = noteHtml(r)
       html += '<div class="skill' + (isOpen ? ' on' : '') + '" data-ja="' + esc(r.ja) + '" data-zh="' + esc(r.zh) + '" data-note="' + esc(r.note || '') + '">'
       html += '<div class="skillName">' + esc(r.zh || r.ja) + '<span class="ja">' + esc(r.ja) + '</span></div>'
       html += '<div class="skillNums">'
       html += '<span class="numChip">DPS <b>' + esc(r.dps || '—') + '</b></span>'
       html += '<span class="numChip">倍率 <b>' + esc(r.mult || '—') + '</b></span>'
-      var secs = firstNumber(r.cast)
-      html += '<span class="numChip">技时间 <b>' + (secs === null ? esc(r.cast || '—') : fmt(secs, 2) + 's') + '</b></span>'
+      html += '<span class="numChip">技时间 <b>' + castText(r) + '</b></span>'
       html += '</div>'
       if (note !== '') html += '<div class="skillNote">' + note + '</div>'
       if ((r.note || '') !== '') html += '<div class="noteHint">点这里可改备注</div>'
       html += '</div>'
     }
     el('skills').innerHTML = rows.length === 0 ? '<div class="empty">没有匹配的技能</div>' : html
-    el('jobMeta').textContent = job.zh + ' · ' + rows.length + ' 行 · 详表 ' + (job.details || []).length + ' 张'
+    el('jobMeta').textContent = view.job.zh + ' · ' + rows.length + ' 行 · 详表 ' + (view.job.details || []).length + ' 张'
+  }
+
+  /**
+   * 宽屏表格。
+   *
+   * 手机上卡片好用，307 行、五个数值列在电脑上还是表格好扫。两边用同一份
+   * 数据与同一套排序，靠 CSS 媒体查询决定显示哪个——所以不存在"某一边没更新"。
+   */
+  function renderTable(){
+    var view = visibleRows()
+    var host = el('skillsTable')
+    if (host === null) return
+    if (view === null){ host.innerHTML = ''; return }
+    var rows = view.rows
+
+    var caret = function(key){ return state.sort === key ? ' <span class="caret">▼</span>' : '' }
+    var html = '<table class="wide"><thead><tr>'
+    html += '<th class="sortable" data-sort="name">技能' + caret('name') + '</th>'
+    html += '<th class="sortable num" data-sort="mult">倍率合计' + caret('mult') + '</th>'
+    html += '<th class="sortable num" data-sort="cast">技时间' + caret('cast') + '</th>'
+    html += '<th class="sortable num" data-sort="dps">DPS 性能' + caret('dps') + '</th>'
+    html += '<th>备注（点一下可改）</th>'
+    html += '</tr></thead><tbody>'
+    for (var i = 0; i < rows.length; i++){
+      var r = rows[i]
+      var isOpen = state.selected !== null && (state.selected.ja === r.ja || state.selected.zh === r.zh)
+      html += '<tr class="' + (isOpen ? 'on' : '') + '" data-ja="' + esc(r.ja) + '" data-zh="' + esc(r.zh) + '" data-note="' + esc(r.note || '') + '">'
+      html += '<td class="skillName">' + esc(r.zh || r.ja)
+      if (r.zh && r.zh !== r.ja) html += '<span class="ja">' + esc(r.ja) + '</span>'
+      html += '</td>'
+      html += '<td class="num">' + esc(r.mult || '—') + '</td>'
+      html += '<td class="num">' + castText(r) + '</td>'
+      html += '<td class="num">' + esc(r.dps || '—') + '</td>'
+      html += '<td class="skillNote">' + noteHtml(r) + '</td>'
+      html += '</tr>'
+    }
+    html += '</tbody></table>'
+    host.innerHTML = rows.length === 0 ? '<div class="empty">没有匹配的技能</div>' : html
+  }
+
+  /** 两种视图一起刷新，避免只更新一个导致切屏时看到旧数据。 */
+  function renderList(){
+    renderSkills()
+    renderTable()
   }
 
   function blockHtml(cells){
@@ -316,19 +414,20 @@ const JS = String.raw`
     }
     /*
      * Revival 的接口只允许自家网页读取（CORS），任何第三方页面都取不到它的数字。
-     * 本机文件版保留一张说明卡；托管版干脆不显示——在公网上给一个永远取不到数据的
-     * 卡片没有意义，链接已经在「官网入口」里了。
+     *
+     * 这张卡片在两种模式下都保留。早先版网站版把它整张去掉了，结果看起来像
+     * "少了一个私服、数据不全"——"取不到"本身就是要说清楚的信息，不该藏起来。
+     * 两种模式只有措辞不同。
      */
-    if (boot.includeRevival){
-      html += '<div class="card"><div class="cardHead"><span class="cardName">DDON Revival</span>'
-      html += '<span class="spacer" style="flex:1 1 auto"></span><span class="tag warn">要用电脑版</span></div>'
-      html += '<div class="cardSub">它的接口只允许自家网页读取（CORS），本页取不到。'
-      html += '技能表不受影响，照常可查。</div>'
-      html += '<div class="cardSub" style="margin-top:6px"><a href="' + esc(boot.links.revival) + '" target="_blank" rel="noreferrer">打开官网 ↗</a>'
-      html += '　<a href="' + esc(boot.links.revivalWiki) + '" target="_blank" rel="noreferrer">官方 Wiki</a>'
-      html += '　<a href="' + esc(boot.links.revivalHowToPlay) + '" target="_blank" rel="noreferrer">怎么玩</a></div>'
-      html += '</div>'
-    }
+    html += '<div class="card"><div class="cardHead"><span class="cardName">DDON Revival</span>'
+    html += '<span class="spacer" style="flex:1 1 auto"></span><span class="tag warn">' + (boot.hosted ? '本站取不到' : '要用电脑版') + '</span></div>'
+    html += '<div class="cardSub">它的接口只允许自家网页读取（CORS），'
+    html += (boot.hosted ? '任何第三方页面都取不到它的在线人数。' : '本页取不到。')
+    html += '技能表不受影响，照常可查。</div>'
+    html += '<div class="cardSub" style="margin-top:6px"><a href="' + esc(boot.links.revival) + '" target="_blank" rel="noreferrer">打开官网 ↗</a>'
+    html += '　<a href="' + esc(boot.links.revivalWiki) + '" target="_blank" rel="noreferrer">官方 Wiki</a>'
+    html += '　<a href="' + esc(boot.links.revivalHowToPlay) + '" target="_blank" rel="noreferrer">怎么玩</a></div>'
+    html += '</div>'
     el('live').innerHTML = html
   }
 
@@ -395,7 +494,7 @@ const JS = String.raw`
   /* ------------------------------------------------------------ 编辑 */
 
   function beginEdit(host, current, onSave){
-    if (state.editing !== null){ renderSkills(); renderDetail() }
+    if (state.editing !== null){ renderList() }
     state.editing = true
     var wrap = document.createElement('div')
     wrap.className = 'editing'
@@ -414,7 +513,7 @@ const JS = String.raw`
       finished = true
       state.editing = null
       if (save) { onSave(input.value); saveStore() }
-      renderSkills(); renderDetail()
+      renderList(); renderDetail()
     }
     ok.addEventListener('click', function(e){ e.stopPropagation(); finish(true) })
     no.addEventListener('click', function(e){ e.stopPropagation(); finish(false) })
@@ -446,7 +545,7 @@ const JS = String.raw`
         var parsed = JSON.parse(String(reader.result))
         store.notes = parsed.notes || {}
         store.cells = parsed.cells || {}
-        saveStore(); renderSkills(); renderDetail(); renderFooter()
+        saveStore(); renderList(); renderDetail(); renderFooter()
         toast('已导入 ' + editedCount() + ' 条改动')
       } catch(e){ toast('文件格式不对：' + e.message, true) }
     }
@@ -474,25 +573,32 @@ const JS = String.raw`
      * 「切职业」那条分支里，列表看起来变了（其实换的是职业），排序和职业都不对。
      */
     var sortNode = t.closest ? t.closest('.sortChip') : null
-    if (sortNode){ state.sort = sortNode.getAttribute('data-sort'); renderSort(); renderSkills(); return }
+    if (sortNode){ state.sort = sortNode.getAttribute('data-sort'); renderSort(); renderList(); return }
+
+    /* 宽屏表格的表头也能点着排序，和上面的筛选按钮效果一样 */
+    var thNode = t.closest ? t.closest('th.sortable') : null
+    if (thNode){ state.sort = thNode.getAttribute('data-sort'); renderSort(); renderList(); return }
 
     var jobNode = t.closest ? t.closest('.job') : null
-    if (jobNode){ state.job = jobNode.getAttribute('data-job'); state.selected = null; state.editing = null; renderJobs(); renderSort(); renderSkills(); renderDetail(); return }
+    if (jobNode){ state.job = jobNode.getAttribute('data-job'); state.selected = null; state.editing = null; renderJobs(); renderSort(); renderList(); renderDetail(); return }
 
-    if (t.id === 'closeDetail'){ state.selected = null; renderDetail(); renderSkills(); return }
+    if (t.id === 'closeDetail'){ state.selected = null; renderDetail(); renderList(); return }
     if (t.id === 'refresh'){ fetchLive(); toast('已刷新在线人数'); return }
     if (t.id === 'export'){ exportEdits(); return }
 
-    /* 备注：点备注文字或下面那行提示都能进编辑。
-       提示行和备注文字是兄弟节点，所以要显式找到要替换成编辑框的那个元素。 */
-    var card = t.closest ? t.closest('.skill') : null
+    /*
+     * 备注：手机上点备注文字或下面那行提示，宽屏上点表格里那一格。
+     * 两者的共同祖先是带 data-note 的元素——手机上它是 .skill 卡片，宽屏上是 <tr>，
+     * 所以用 closest('[data-note]') 一次覆盖两种视图。
+     */
+    var card = t.closest ? t.closest('[data-note]') : null
     var hitNote = t.closest ? t.closest('.skillNote') : null
     var hitHint = t.closest ? t.closest('.noteHint') : null
     if ((hitNote || hitHint) && card){
       event.stopPropagation()
       var src = card.getAttribute('data-note') || ''
       if (src === ''){ toast('这条没有原文，无法作为键保存', true); return }
-      var host = hitNote || card.querySelector('.skillNote') || card.querySelector('.skillName')
+      var host = hitNote || card.querySelector('.skillName') || card
       var job = currentJob()
       var row = null
       for (var i = 0; i < (job.summaryRows || []).length; i++) if ((job.summaryRows[i].note || '') === src){ row = job.summaryRows[i]; break }
@@ -520,18 +626,19 @@ const JS = String.raw`
       return
     }
 
-    var card2 = t.closest ? t.closest('.skill') : null
+    /* 展开详表：手机点卡片，宽屏点表格行 */
+    var card2 = t.closest ? t.closest('.skill, tbody tr') : null
     if (card2){
       var ja = card2.getAttribute('data-ja'), zh = card2.getAttribute('data-zh')
       if (state.selected !== null && state.selected.ja === ja && state.selected.zh === zh) state.selected = null
       else state.selected = { ja: ja, zh: zh }
-      renderSkills(); renderDetail()
+      renderList(); renderDetail()
       return
     }
   })
 
   document.addEventListener('input', function(event){
-    if (event.target.id === 'search'){ state.query = event.target.value; renderSkills() }
+    if (event.target.id === 'search'){ state.query = event.target.value; renderList() }
   })
 
   el('importFile').addEventListener('change', function(event){
@@ -562,7 +669,7 @@ const JS = String.raw`
   loadStore()
   renderJobs()
   renderSort()
-  renderSkills()
+  renderList()
   renderLinks()
   renderFooter()
   el('legend').textContent = boot.legend
@@ -577,16 +684,19 @@ const JS = String.raw`
  * Generate one self-contained page.
  *
  * Two callers share this: `main()` writes the phone file, and
- * `build/make-web.js` writes the hosted variant with `hosted: true` and without
- * the Revival card (see below). Keeping one generator means the two builds cannot
- * drift.
+ * `build/make-web.js` writes the hosted variant with `hosted: true`. Keeping one
+ * generator means the two builds cannot drift.
+ *
+ * The same markup serves both, with one responsive breakpoint: a card list on
+ * narrow screens and a sortable table on wide ones. An earlier version rendered
+ * cards unconditionally, which made the website look like a phone app on a
+ * desktop.
  *
  * @param options.hosted - true when the page will be served from an http(s) origin.
- * @param options.includeRevival - false to omit the Revival card entirely.
+ *   Only changes wording; the content is identical, Revival card included.
  */
 function buildPage(options) {
   const hosted = options.hosted === true
-  const includeRevival = options.includeRevival !== false
   const boot = {
     jobs: SNAPSHOT.jobs,
     legend: LEGEND,
@@ -595,7 +705,6 @@ function buildPage(options) {
     counts: manifest.counts,
     links: LINKS,
     hosted,
-    includeRevival,
   }
 
   return `<!doctype html>
@@ -633,6 +742,7 @@ ${ASSETS.favicon === null ? '' : `<link rel="apple-touch-icon" href="${ASSETS.fa
   <div class="toolbar"><span class="tag" id="jobMeta"></span></div>
   <div class="jobs" id="sort"></div>
   <div id="skills"></div>
+  <div id="skillsTable" class="wideWrap"></div>
   <div id="detail"></div>
 
   <h2>你的改动</h2>
@@ -654,9 +764,7 @@ ${ASSETS.favicon === null ? '' : `<link rel="apple-touch-icon" href="${ASSETS.fa
       hosted ? '，本站内容随作者更新，刷新页面即为最新。' : '，烘在本文件里，不会自动更新。'
     }</span></div>
     <div class="footRow"><span>译名</span><span>来自私服汉化包索引，非官方译名；版权归原汉化组所有。</span></div>
-    <div class="footRow"><span>在线人数</span><span>LegacyDDON 与 Dogma Rising 由你的浏览器直接读取${
-      includeRevival ? '；DDON Revival 的接口禁止跨站读取，本页取不到。' : '。'
-    }</span></div>
+    <div class="footRow"><span>在线人数</span><span>LegacyDDON 与 Dogma Rising 由你的浏览器直接读取；DDON Revival 的接口禁止跨站读取，本页取不到。</span></div>
     <div class="footRow"><span>你的改动</span><span>只存在你这台设备的浏览器里，不会上传，别人也看不到。</span></div>
     ${
       hosted
@@ -714,7 +822,7 @@ function checkPage(html, label) {
 
 function main() {
   fs.mkdirSync(path.dirname(OUT), { recursive: true })
-  const html = buildPage({ hosted: false, includeRevival: true })
+  const html = buildPage({ hosted: false })
   const boot = checkPage(html, 'phone')
   fs.writeFileSync(OUT, html, 'utf8')
   const kb = (Buffer.byteLength(html) / 1024).toFixed(0)

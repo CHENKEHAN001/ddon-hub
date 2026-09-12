@@ -59,7 +59,7 @@ def main() -> int:
                 liveCards: document.querySelectorAll('#live .card').length,
                 links: document.querySelectorAll('#links a').length,
                 headerTag: (document.querySelector('header .tag') || {}).textContent || '',
-                liveText: ((document.getElementById('live') || {}).textContent || '').replace(/\\s+/g, ' ').slice(0, 160),
+                liveText: ((document.getElementById('live') || {}).textContent || '').replace(/\\s+/g, ' ').slice(0, 200),
                 footText: ((document.querySelector('.foot') || {}).textContent || '').replace(/\\s+/g, ' ').slice(0, 200),
             })"""
         )
@@ -70,6 +70,74 @@ def main() -> int:
             print("  JS 错误:")
             for e in errors[:5]:
                 print("    ", e)
+
+        # 三个私服都要出现：Revival 取不到数字，但卡片必须在，
+        # 否则看起来像"少了一个私服"而不是"这个源读不了"。
+        if info["liveCards"] < 3:
+            problems.append(f"在线卡片只有 {info['liveCards']} 张，三个私服都应出现")
+        if "Revival" not in info["liveText"]:
+            problems.append("在线区没有 DDON Revival——它取不到数字，但卡片不应缺席")
+
+        # 宽屏：媒体查询生效后应显示表格、隐藏卡片
+        page.set_viewport_size({"width": 1440, "height": 900})
+        page.wait_for_timeout(800)
+        wide = page.evaluate(
+            """() => {
+                const cards = document.getElementById('skills')
+                const table = document.getElementById('skillsTable')
+                const rows = document.querySelectorAll('#skillsTable table.wide tbody tr')
+                const ths = [...document.querySelectorAll('#skillsTable table.wide thead th')].map(t => t.textContent.replace('▼','').trim())
+                return {
+                    cardsHidden: cards ? getComputedStyle(cards).display === 'none' : null,
+                    tableShown: table ? getComputedStyle(table).display !== 'none' : null,
+                    rows: rows.length,
+                    headers: ths,
+                }
+            }"""
+        )
+        print("  宽屏 1440px:", wide)
+        if wide["cardsHidden"] is not True:
+            problems.append("宽屏下卡片列表没有隐藏")
+        if wide["tableShown"] is not True:
+            problems.append("宽屏下表格没有显示")
+        if wide["rows"] < 20:
+            problems.append(f"宽屏表格只有 {wide['rows']} 行")
+        for want in ("倍率合计", "技时间", "DPS 性能", "备注"):
+            if not any(want in h for h in wide["headers"]):
+                problems.append(f"宽屏表格缺少「{want}」列")
+
+        # 宽屏下点表头排序，和手机端点筛选按钮应当等效
+        page.evaluate(
+            """() => {
+                const th = [...document.querySelectorAll('#skillsTable thead th.sortable')]
+                    .find(t => t.getAttribute('data-sort') === 'name')
+                if (th) th.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+            }"""
+        )
+        page.wait_for_timeout(600)
+        sorted_wide = page.evaluate(
+            """() => {
+                const on = document.querySelector('#sort .job.on')
+                const first = document.querySelector('#skillsTable tbody tr td.skillName')
+                return { sort: on ? on.getAttribute('data-sort') : null, first: first ? first.textContent.slice(0, 18) : null }
+            }"""
+        )
+        print("  点宽屏表头「名称」:", sorted_wide)
+        if sorted_wide["sort"] != "name":
+            problems.append(f"宽屏点表头排序没生效：{sorted_wide['sort']}")
+
+        # 回到手机视口，确认卡片回来
+        page.set_viewport_size({"width": 390, "height": 844})
+        page.wait_for_timeout(600)
+        narrow = page.evaluate(
+            """() => ({
+                cardsShown: getComputedStyle(document.getElementById('skills')).display !== 'none',
+                tableHidden: getComputedStyle(document.getElementById('skillsTable')).display === 'none',
+            })"""
+        )
+        print("  回到 390px:", narrow)
+        if narrow["cardsShown"] is not True or narrow["tableHidden"] is not True:
+            problems.append("回到窄屏后没有切回卡片列表")
 
         try:
             page.locator(".wrap").screenshot(path=str(SHOT), timeout=20000, animations="disabled")
@@ -94,8 +162,10 @@ def main() -> int:
             problems.append("托管版仍在显示「离线可用」文案")
         if "手机版" in info["headerTag"]:
             problems.append("托管版仍在显示「手机版」文案")
-        if "Revival" in info["liveText"]:
-            problems.append("托管版仍显示 Revival 卡片（公网取不到，应当隐藏）")
+        if "Revival" in info["liveText"] and "只允许自家网页读取" not in info["liveText"]:
+            problems.append("Revival 卡片在，但没有说明取不到的原因")
+        if "要用电脑版" in info["liveText"]:
+            problems.append("网站版出现了手机专属措辞「要用电脑版」")
         if "抓取" not in info["footText"] and "2026-09-10" not in info["footText"]:
             problems.append("页脚没有标注数据抓取时间")
         if robots["status"] != 200:
@@ -108,7 +178,7 @@ def main() -> int:
         for row in problems:
             print("   " + row)
         return 1
-    print("OK: 托管版按网站方式打开正常；Revival 卡片已隐藏，文案与出处声明正确")
+    print("OK: 托管版按网站方式打开正常；三个私服都在、宽屏走表格窄屏走卡片、文案与出处声明正确")
     return 0
 
 
