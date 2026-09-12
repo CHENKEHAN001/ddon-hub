@@ -20,12 +20,17 @@ LAUNCHER = r"C:\Users\chenkehan\Desktop\工作区\ddon-arc\launch_chrome_cdp.ps1
 SITE = Path(r"C:\Users\chenkehan\Desktop\工作区\ddon-hub-portable\dist\site")
 PORT = 8897
 
-# 期望：每张卡片应带的入口（不含官网，官网在链接行里也会出现但这里单列）
+# 期望：每张卡片应带的入口（含官网）
 EXPECT = {
     "DDON Revival": ["官网", "排行榜", "官方 Wiki", "怎么玩"],
     "LegacyDDON": ["官网", "公告", "地图", "物品检索", "板任务", "日文 wiki"],
     "Dogma Rising": ["官网", "Live News", "怎么玩", "地图", "Discord"],
 }
+
+# 手机版没有服务端代理，Revival 取不到数字，所以它的入口比网站版少一个「官网」之外的差别不管；
+# 这里只校验网站版（本地静态目录 = 网站版产物）的清单。
+# 卡片顺序必须固定：早先按接口响应速度排列，刷新几次顺序会变。
+EXPECT_ORDER = ["revival", "legacy", "rising"]
 
 
 class Quiet(http.server.SimpleHTTPRequestHandler):
@@ -53,6 +58,7 @@ def main() -> int:
 
         cards = page.evaluate(
             """() => [...document.querySelectorAll('#live .card')].map(card => ({
+                id: card.getAttribute('data-id') || '',
                 name: (card.querySelector('.cardName') || {}).textContent || '',
                 subtitle: (card.querySelector('.cardSub') || {}).textContent || '',
                 tag: (card.querySelector('.tag') || {}).textContent || '',
@@ -100,6 +106,10 @@ def main() -> int:
         problems.append(f"页脚的资料与社区链接不足：{footer}")
     if any(len(c["links"]) < 4 for c in cards):
         problems.append("有卡片链接少于 4 个")
+
+    order = [c["id"] for c in cards]
+    if order != EXPECT_ORDER:
+        problems.append(f"卡片顺序不固定：得到 {order}，应为 {EXPECT_ORDER}（按响应速度排会每次刷新都变）")
 
     if problems:
         print("FAIL:")

@@ -40,7 +40,7 @@ def main() -> int:
                 name: (card.querySelector('.cardName') || {}).textContent || '',
                 tag: (card.querySelector('.tag') || {}).textContent || '',
                 big: (card.querySelector('.big') || {}).textContent || '',
-                bars: card.querySelectorAll('.bar').length,
+                bars: card.querySelectorAll('.barChip').length,
                 text: card.textContent.replace(/\\s+/g, ' ').slice(0, 90),
             }))"""
         )

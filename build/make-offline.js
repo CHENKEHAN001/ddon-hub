@@ -86,7 +86,7 @@ input{min-height:34px;padding:6px 10px}
 .editing{display:flex;gap:6px;align-items:center;margin-top:5px}
 .editing input{flex:1 1 auto}
 .editing button{flex:none}
-/* 官网入口：一行一个，触摸目标够大 */
+/* 旧的独立入口区块样式，已由卡片内的 a.chip 取代；留着以防有页面还在用 .links */
 .links{display:flex;flex-direction:column;gap:2px;margin-top:2px}
 .links a{display:block;padding:7px 2px;border-top:1px solid var(--line);font-size:13.5px}
 .links a:first-child{border-top:0}
@@ -479,7 +479,7 @@ const JS = String.raw`
        */
       var links = b.links || []
 
-      html += '<div class="card"><div class="cardHead">'
+      html += '<div class="card" data-id="' + esc(b.id || '') + '"><div class="cardHead">'
       html += '<span class="cardName">' + esc(b.label) + '</span>'
       html += '<span class="cardSub">' + esc(b.subtitle || '') + '</span>'
       html += b.online === null ? '<span class="tag err">取不到</span>' : '<span class="tag ok">实时</span>'
@@ -537,7 +537,7 @@ const JS = String.raw`
     html += '<span class="spacer" style="flex:1 1 auto"></span>'
     html += '<span class="cardSub">' + (news.fetchedAt ? new Date(news.fetchedAt).toLocaleDateString() + ' 抓取' : '') + '</span></div>'
     if (entries.length === 0){
-      html += '<div class="cardSub">本次构建没有取到公告' + ((news.errors && news.errors.length > 0) ? '：' + esc(news.errors.join('；')) : '') + '。入口在下面的「官网入口」里。</div>'
+      html += '<div class="cardSub">本次构建没有取到公告' + ((news.errors && news.errors.length > 0) ? '：' + esc(news.errors.join('；')) : '') + '。各服务器的入口在下面「私服在线」的卡片里。</div>'
     } else {
       html += '<div class="newsList">'
       for (var i = 0; i < entries.length; i++){
@@ -576,15 +576,22 @@ const JS = String.raw`
 
   /* 各卡片共用的底：标签、副标题、官网链接组，取到数字后再补 chips / meta。 */
   function baseBox(n, note){
-    return { label: n.label, subtitle: n.subtitle, online: null, links: n.links, site: n.site, note: note }
+    return { id: n.id, label: n.label, subtitle: n.subtitle, online: null, links: n.links, site: n.site, note: note }
   }
 
   function fetchLive(){
-    var boxes = []
+    /*
+     * 按 NOTES 的顺序收结果，不能按谁先返回谁排前面。
+     *
+     * 早先是 boxes.push(box)，于是卡片顺序取决于三个接口的响应速度——
+     * 同一份页面刷新几次可能看到 Revival / Legacy / Dogma，也可能看到
+     * Revival / Dogma / Legacy。用下标写入就固定了顺序。
+     */
+    var boxes = new Array(NOTES.length)
     var pending = NOTES.length
     renderLive(NOTES.map(function(n){ return baseBox(n, '读取中…') }))
-    NOTES.forEach(function(n){
-      var done = function(box){ boxes.push(box); pending -= 1; if (pending === 0) renderLive(boxes.slice()) }
+    NOTES.forEach(function(n, index){
+      var done = function(box){ boxes[index] = box; pending -= 1; if (pending === 0) renderLive(boxes.slice()) }
       fetch(n.url, { cache: 'no-store' }).then(function(r){
         if (!r.ok) throw new Error('HTTP ' + r.status)
         return r.json()
