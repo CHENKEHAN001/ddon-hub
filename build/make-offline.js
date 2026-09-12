@@ -36,6 +36,9 @@ const ASSETS = require(path.join(ROOT, 'src', 'assets-inline.js'))
 /* The link table is the same one the desktop build uses, so an address change
    only has to be made in one place. */
 const { LINKS } = require(path.join(ROOT, 'src', 'upstream.js'))
+/* 公告由 build/fetch-news.js 抓取后烘入——电脑版与插件在服务端抓，网站版靠这个快照
+   拿到同样的条目，四个形态的公告区块才不会一个有一个没有。 */
+const NEWS = require(path.join(ROOT, 'src', 'news.js'))
 
 /* --------------------------------------------------------------------- styles */
 
@@ -87,6 +90,15 @@ input{min-height:34px;padding:6px 10px}
 .links{display:flex;flex-direction:column;gap:2px;margin-top:2px}
 .links a{display:block;padding:7px 2px;border-top:1px solid var(--line);font-size:13.5px}
 .links a:first-child{border-top:0}
+/* 公告条目：日期 + 来源 + 标题，手机上竖排，宽屏上分三列 */
+.newsList{display:flex;flex-direction:column}
+.newsItem{display:grid;grid-template-columns:auto 1fr;gap:2px 10px;padding:7px 0;border-top:1px solid var(--line);color:inherit;text-decoration:none}
+.newsItem:first-child{border-top:0}
+.newsItem:hover b{color:var(--accent)}
+.newsDate{color:var(--dim);font-size:11.5px;font-variant-numeric:tabular-nums;white-space:nowrap}
+.newsSrc{color:var(--dim);font-size:11px;text-align:right;white-space:nowrap}
+.newsBody2{grid-column:1 / -1;font-size:13px;line-height:1.5}
+.newsSum{display:block;color:var(--dim);font-size:11.5px;margin-top:1px}
 
 /* ---------------------------------------------------------------------------
    宽屏：换成表格，卡片隐藏。
@@ -443,6 +455,40 @@ const JS = String.raw`
     el('live').innerHTML = html
   }
 
+  /**
+   * 官方公告。
+   *
+   * 条目是构建时抓的快照（build/fetch-news.js），所以每条都带抓取时间，
+   * 页面上也写明——电脑版和插件是运行时抓的，网站版做不到，得说清楚。
+   */
+  function renderNews(){
+    var host = el('news')
+    if (host === null) return
+    var news = boot.news || { entries: [], errors: [], fetchedAt: '' }
+    var entries = news.entries || []
+    var html = '<div class="card">'
+    html += '<div class="cardHead"><span class="cardName">官方公告</span>'
+    html += '<span class="spacer" style="flex:1 1 auto"></span>'
+    html += '<span class="cardSub">' + (news.fetchedAt ? new Date(news.fetchedAt).toLocaleDateString() + ' 抓取' : '') + '</span></div>'
+    if (entries.length === 0){
+      html += '<div class="cardSub">本次构建没有取到公告' + ((news.errors && news.errors.length > 0) ? '：' + esc(news.errors.join('；')) : '') + '。入口在下面的「官网入口」里。</div>'
+    } else {
+      html += '<div class="newsList">'
+      for (var i = 0; i < entries.length; i++){
+        var e = entries[i]
+        html += '<a class="newsItem" href="' + esc(e.url) + '" target="_blank" rel="noreferrer">'
+        html += '<span class="newsDate">' + esc(e.date || '') + '</span>'
+        html += '<span class="newsSrc">' + esc(e.sourceLabel || '') + '</span>'
+        html += '<span class="newsBody2"><b>' + esc(e.title || '') + '</b>'
+        if (e.summary && e.summary !== e.title) html += '<span class="newsSum">' + esc(e.summary) + '</span>'
+        html += '</span></a>'
+      }
+      html += '</div>'
+    }
+    html += '</div>'
+    host.innerHTML = html
+  }
+
   /* 官网入口：三台私服各一行，外加 Discord 与 wiki。
      手机版取不到公号，所以对这些站点的入口只能靠链接。 */
   function renderLinks(){
@@ -507,7 +553,14 @@ const JS = String.raw`
           done({ label: n.label, online: online2, site: n.site, note: payload.updated ? '上游更新于 ' + payload.updated : '' })
         }
       }).catch(function(e){
-        done({ label: n.label, online: null, site: n.site, note: e.message })
+        /* 代理不可用时要说清原因：Revival 的接口只允许自家网页读取，这个页面靠
+           服务端代理才拿得到；代理挂了就只剩浏览器直连，那必然被 CORS 拦。
+           只显示一句 "HTTP 404" 看不出这层意思。 */
+        var note = e.message
+        if (n.type === 'proxy'){
+          note = '取不到（' + e.message + '）——它的接口只允许自家网页读取，本页靠服务端代理取数'
+        }
+        done({ label: n.label, online: null, site: n.site, note: note })
       })
     })
   }
@@ -691,6 +744,7 @@ const JS = String.raw`
   renderJobs()
   renderSort()
   renderList()
+  renderNews()
   renderLinks()
   renderFooter()
   el('legend').textContent = boot.legend
@@ -725,6 +779,7 @@ function buildPage(options) {
     defaultJob: SNAPSHOT.jobs.some((job) => job.zh === '獵人') ? '獵人' : SNAPSHOT.jobs[0].zh,
     counts: manifest.counts,
     links: LINKS,
+    news: NEWS,
     hosted,
   }
 
@@ -760,8 +815,13 @@ ${ASSETS.favicon === null || hosted ? '' : `<link rel="apple-touch-icon" href="$
     <button type="button" id="refresh">刷新人数</button>
   </header>
 
-  <h2>官方公告 / 官网入口</h2>
+  <h2>官方公告</h2>
+  <div class="grid" id="news"></div>
+
+  <h2>私服在线</h2>
   <div class="grid" id="live"></div>
+
+  <h2>官网入口</h2>
   <div class="grid" id="links"></div>
 
   <h2>职业技能数据</h2>

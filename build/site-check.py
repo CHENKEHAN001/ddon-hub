@@ -57,19 +57,28 @@ def main() -> int:
                 jobs: document.querySelectorAll('#jobs .job').length,
                 skills: document.querySelectorAll('#skills .skill').length,
                 liveCards: document.querySelectorAll('#live .card').length,
+                newsItems: document.querySelectorAll('#news .newsItem').length,
+                sections: [...document.querySelectorAll('h2')].map(h => h.textContent),
                 links: document.querySelectorAll('#links a').length,
                 headerTag: (document.querySelector('header .tag') || {}).textContent || '',
                 liveText: ((document.getElementById('live') || {}).textContent || '').replace(/\\s+/g, ' ').slice(0, 200),
+                newsText: ((document.getElementById('news') || {}).textContent || '').replace(/\\s+/g, ' ').slice(0, 200),
                 footText: ((document.querySelector('.foot') || {}).textContent || '').replace(/\\s+/g, ' ').slice(0, 200),
             })"""
         )
-        print("打开站点:", {k: v for k, v in info.items() if k not in ("liveText", "footText")})
+        print("打开站点:", {k: v for k, v in info.items() if k not in ("liveText", "newsText", "footText")})
         print("  在线区:", info["liveText"])
-        print("  页脚  :", info["footText"])
+        print("  公告区:", info["newsText"])
         if errors:
             print("  JS 错误:")
             for e in errors[:5]:
                 print("    ", e)
+
+        # 公告区块必须真的有条目——电脑版和插件都有，缺了就是形态间不一致
+        if info["newsItems"] < 1:
+            problems.append("公告区没有条目（电脑版与插件都有抓取到的公告）")
+        if "官方公告" not in info["sections"]:
+            problems.append("缺少「官方公告」区块标题")
 
         # 三个私服都要出现：Revival 取不到数字，但卡片必须在，
         # 否则看起来像"少了一个私服"而不是"这个源读不了"。
@@ -162,10 +171,14 @@ def main() -> int:
             problems.append("托管版仍在显示「离线可用」文案")
         if "手机版" in info["headerTag"]:
             problems.append("托管版仍在显示「手机版」文案")
-        if "Revival" in info["liveText"] and "只允许自家网页读取" not in info["liveText"]:
+        if "Revival" in info["liveText"] and "只允许自家网页读取" not in info["liveText"] and "服务端代理" not in info["liveText"]:
             problems.append("Revival 卡片在，但没有说明取不到的原因")
         if "要用电脑版" in info["liveText"]:
             problems.append("网站版出现了手机专属措辞「要用电脑版」")
+        # 本地静态服务器没有 Worker，所以代理必然 404——这是预期的，
+        # 线上由 worker/index.js 提供。这里只要求它把原因说清楚。
+        if "代理" in info["liveText"] and "HTTP 404" in info["liveText"]:
+            print("  （本地无 Worker，代理 404 属预期；线上由 worker/index.js 提供）")
         if "抓取" not in info["footText"] and "2026-09-10" not in info["footText"]:
             problems.append("页脚没有标注数据抓取时间")
         if robots["status"] != 200:
