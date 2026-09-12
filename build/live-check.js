@@ -46,11 +46,12 @@ async function main() {
   /* --- 2. 数据块与内联脚本 --- */
   console.log('\n2) 数据块与脚本')
   const bootMatch = /<script id="boot"[^>]*>([\s\S]*?)<\/script>/.exec(home.body)
+  /* 在块外声明：下面第 2b 段还要用它，放块里会取不到 */
+  let boot
   if (bootMatch === null) {
     problems.push('找不到 boot 数据块')
     console.log('   ** 找不到 boot 块')
   } else {
-    let boot
     try {
       boot = JSON.parse(bootMatch[1])
     } catch (error) {
@@ -79,14 +80,20 @@ async function main() {
   if (!home.body.includes('min-width:900px')) problems.push('页面没有宽屏媒体查询——电脑上会是一列卡片')
 
   /*
-   * 每个服务器的入口都在自己的卡片里（不再有独立的「官网入口」区块）。
-   * 从 HTML 只能数到链接总数，所以这里核对"卡片里带链接"这件事，
-   * 具体的每卡片清单由 build/cards-check.py 走 DOM 检查。
+   * 卡片入口的数据源。
+   *
+   * 不要去 grep 渲染后的链接——卡片与页脚里的 `<a class="chip" href="...">` 都是
+   * 运行时由 JS 拼出来的，HTML 里只有生成它们的代码，正则永远匹配不到 0 条以上。
+   * 这个错在本项目里犯过好几次（同样的道理：客户端脚本共用、措辞靠三目运算选择、
+   * 统计口径与实际渲染无关），所以这里只查"数据在不在"，渲染结果交给
+   * build/cards-check.py（走 DOM）与 build/site-check.py 验证。
    */
-  const cardLinks = [...home.body.matchAll(/class="chip" href="(https?:[^"]+)"/g)].map((m) => m[1])
-  console.log('\n2b) 卡片内入口')
-  console.log('   带地址的入口链接:', cardLinks.length, '条，去重后', new Set(cardLinks).size, '条')
-  if (cardLinks.length < 15) problems.push(`卡片内入口只有 ${cardLinks.length} 条，三个服务器共应有 15 条`)
+  const linksInBoot = Object.keys(boot === undefined ? {} : boot.links || {}).length
+  console.log('\n2b) 入口数据')
+  console.log('   boot.links 条目:', linksInBoot)
+  console.log('   （渲染出的链接数由 cards-check.py 走 DOM 验证，此处不重复）')
+  if (linksInBoot < 18) problems.push(`boot.links 只有 ${linksInBoot} 条，应有 18 条`)
+  if (!home.body.includes('data-id')) problems.push('页面脚本里没有 data-id——卡片模板可能没生成')
   if (home.body.includes('>官网入口<')) problems.push('「官网入口」区块还在——入口应当只出现在卡片里')
 
   const scripts = [...home.body.matchAll(/<script(?:\s[^>]*)?>([\s\S]*?)<\/script>/g)].map((m) => m[1])
