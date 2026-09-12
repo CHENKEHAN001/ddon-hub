@@ -378,10 +378,22 @@ const JS = String.raw`
 
   /* ------------------------------------------------------------ 在线人数 */
 
+  /*
+   * 在线人数的来源。
+   *
+   * Revival 的接口只允许 live.ddon.org 自己读取，访客浏览器直连会被 CORS 拦。
+   * 电脑版和 DSH 插件是在服务端取数所以不受影响；网站版靠 worker/index.js 那个
+   * 代理拿到同样的数据。本地文件版没有服务端可用，只能直连并接受取不到。
+   */
   var NOTES = [
     { id: 'legacy', label: 'LegacyDDON', url: 'https://legacyddon.com/rpc/status', type: 'worlds', site: boot.links.legacy },
     { id: 'rising', label: 'Dogma Rising', url: 'https://dogmarising.netlify.app/.netlify/functions/status', type: 'single', site: boot.links.rising },
   ]
+  if (boot.hosted){
+    NOTES.unshift({ id: 'revival', label: 'DDON Revival', url: '/api/revival', type: 'proxy', site: boot.links.revival })
+  }
+  /* 取不到时这张卡片仍然要出现（说明原因），所以单独记下它的位置 */
+  var REVIVAL_INDEX = boot.hosted ? 0 : -1
 
   function legacyRows(payload){
     if (!Array.isArray(payload)) return []
@@ -409,25 +421,25 @@ const JS = String.raw`
         }
         if (b.note) html += '<div class="cardSub">' + esc(b.note) + '</div>'
       }
-      if (b.url) html += '<div class="cardSub" style="margin-top:6px"><a href="' + esc(b.url) + '" target="_blank" rel="noreferrer">打开官网 ↗</a></div>'
+      if (b.url) html += '<div class="cardSub" style="margin-top:6px"><a href="' + esc(b.site || b.url) + '" target="_blank" rel="noreferrer">打开官网 ↗</a></div>'
       html += '</div>'
     }
     /*
-     * Revival 的接口只允许自家网页读取（CORS），任何第三方页面都取不到它的数字。
+     * Revival 卡片在两种模式下都要出现——早先网站版把它整张删了，结果看起来像
+     * "少了一个私服、数据不全"。
      *
-     * 这张卡片在两种模式下都保留。早先版网站版把它整张去掉了，结果看起来像
-     * "少了一个私服、数据不全"——"取不到"本身就是要说清楚的信息，不该藏起来。
-     * 两种模式只有措辞不同。
+     * 网站版走 /api/revival 代理，能拿到数字（电脑版和插件也是服务端取数，不受 CORS 限制）；
+     * 本地文件版没有服务端可用，只能直连，因此这张卡片用来说明取不到的原因。
      */
-    html += '<div class="card"><div class="cardHead"><span class="cardName">DDON Revival</span>'
-    html += '<span class="spacer" style="flex:1 1 auto"></span><span class="tag warn">' + (boot.hosted ? '本站取不到' : '要用电脑版') + '</span></div>'
-    html += '<div class="cardSub">它的接口只允许自家网页读取（CORS），'
-    html += (boot.hosted ? '任何第三方页面都取不到它的在线人数。' : '本页取不到。')
-    html += '技能表不受影响，照常可查。</div>'
-    html += '<div class="cardSub" style="margin-top:6px"><a href="' + esc(boot.links.revival) + '" target="_blank" rel="noreferrer">打开官网 ↗</a>'
-    html += '　<a href="' + esc(boot.links.revivalWiki) + '" target="_blank" rel="noreferrer">官方 Wiki</a>'
-    html += '　<a href="' + esc(boot.links.revivalHowToPlay) + '" target="_blank" rel="noreferrer">怎么玩</a></div>'
-    html += '</div>'
+    if (REVIVAL_INDEX < 0){
+      html += '<div class="card"><div class="cardHead"><span class="cardName">DDON Revival</span>'
+      html += '<span class="spacer" style="flex:1 1 auto"></span><span class="tag warn">要用电脑版</span></div>'
+      html += '<div class="cardSub">它的接口只允许自家网页读取（CORS），本页取不到。技能表不受影响，照常可查。</div>'
+      html += '<div class="cardSub" style="margin-top:6px"><a href="' + esc(boot.links.revival) + '" target="_blank" rel="noreferrer">打开官网 ↗</a>'
+      html += '　<a href="' + esc(boot.links.revivalWiki) + '" target="_blank" rel="noreferrer">官方 Wiki</a>'
+      html += '　<a href="' + esc(boot.links.revivalHowToPlay) + '" target="_blank" rel="noreferrer">怎么玩</a></div>'
+      html += '</div>'
+    }
     el('live').innerHTML = html
   }
 
@@ -469,7 +481,7 @@ const JS = String.raw`
   function fetchLive(){
     var boxes = []
     var pending = NOTES.length
-    renderLive(NOTES.map(function(n){ return { label: n.label, online: null, note: '读取中…' } }))
+    renderLive(NOTES.map(function(n){ return { label: n.label, online: null, site: n.site, note: '读取中…' } }))
     NOTES.forEach(function(n){
       var done = function(box){ boxes.push(box); pending -= 1; if (pending === 0) renderLive(boxes.slice()) }
       fetch(n.url, { cache: 'no-store' }).then(function(r){
@@ -479,14 +491,23 @@ const JS = String.raw`
         if (n.type === 'worlds'){
           var rows = legacyRows(payload)
           var total = rows.reduce(function(s, r){ return s + r.players }, 0)
-          done({ label: n.label, online: total, bars: rows.map(function(r){ return r.name + r.brief.replace(/^World\s*/i, ' ') + ' ' + r.players + '/' + r.capacity }) })
+          done({ label: n.label, online: total, site: n.site, bars: rows.map(function(r){ return r.name + r.brief.replace(/^World\s*/i, ' ') + ' ' + r.players + '/' + r.capacity }) })
+        } else if (n.type === 'proxy'){
+          /* Worker 代理已经校验过形状，这里只取总数与各频道 */
+          if (!payload || payload.ok !== true) throw new Error((payload && payload.error) || '代理返回失败')
+          var online = Number(payload.online)
+          if (!isFinite(online)) throw new Error('代理返回里没有 online')
+          done({
+            label: n.label, online: online, site: n.site,
+            bars: (payload.channels || []).map(function(c){ return 'CH' + c.channel + ' ' + c.players }),
+          })
         } else {
-          var online = Number(payload && payload.online)
-          if (!isFinite(online)) throw new Error('接口里没有 online 字段')
-          done({ label: n.label, online: online, note: payload.updated ? '上游更新于 ' + payload.updated : '' })
+          var online2 = Number(payload && payload.online)
+          if (!isFinite(online2)) throw new Error('接口里没有 online 字段')
+          done({ label: n.label, online: online2, site: n.site, note: payload.updated ? '上游更新于 ' + payload.updated : '' })
         }
       }).catch(function(e){
-        done({ label: n.label, online: null, note: e.message + '（离线打开时属正常）' })
+        done({ label: n.label, online: null, site: n.site, note: e.message })
       })
     })
   }
@@ -713,11 +734,18 @@ function buildPage(options) {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#14161a">
-<meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<title>DDON 资料站 · 手机版</title>
+${
+  /*
+   * 这几个 meta 只对"存到手机里打开"有意义（Safari 的独立窗口与状态栏样式）。
+   * 网站版不加：它是给浏览器打开的，带上这些会让 iOS 把它当成一个可安装的应用。
+   * 标题同理——早先写死了"· 手机版"，网站版也照搬，浏览器标签上就一直显示手机版。
+   */
+  hosted
+    ? '<title>DDON 资料站</title>'
+    : '<meta name="apple-mobile-web-app-capable" content="yes">\n<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">\n<title>DDON 资料站 · 手机版</title>'
+}
 ${ASSETS.favicon === null ? '' : `<link rel="icon" type="image/png" href="${ASSETS.favicon}">`}
-${ASSETS.favicon === null ? '' : `<link rel="apple-touch-icon" href="${ASSETS.favicon}">`}
+${ASSETS.favicon === null || hosted ? '' : `<link rel="apple-touch-icon" href="${ASSETS.favicon}">`}
 <style>${desktop.CSS}</style>
 <style>${MOBILE_CSS}</style>
 </head>

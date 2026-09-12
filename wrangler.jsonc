@@ -1,24 +1,29 @@
 {
-  // Cloudflare Workers 静态资源部署配置。
+  // Cloudflare Workers 配置：静态资源 + 一个只做代理的脚本。
   //
-  // 这个项目没有 Worker 脚本，只有静态文件，所以不写 `main`——
-  // 请求直接由静态资源处理，不经过任何服务端代码。
-  //
-  // 目录指向 dist/site，也就是 build/make-web.js 的产物：
+  // 静态目录 dist/site，也就是 build/make-web.js 的产物：
   //   index.html   整站（数据、样式、脚本全内联）
   //   robots.txt   请求搜索引擎不要收录
   //   _headers     下发 X-Robots-Tag，防止不读 robots.txt 的爬虫
+  //
+  // main 是 worker/index.js，它只处理 /api/revival——
+  // 因为 api.ddon.org 只允许 live.ddon.org 自己读取（CORS），访客浏览器直连会被拦。
+  // 电脑版和 DSH 插件能在服务端取数所以不受影响，这个 Worker 就是网站版的服务端。
+  // 其余请求命中静态资源后直接返回，不会进这个脚本。
   //
   // 部署由仓库根目录的 wrangler 完成，所以 Cloudflare 控制台里的
   // Build command 留空、Deploy command 保持默认的 `npx wrangler deploy`。
   "$schema": "./node_modules/wrangler/config-schema.json",
   "name": "ddon-hub",
   "compatibility_date": "2026-09-12",
+  "main": "worker/index.js",
 
   "assets": {
     "directory": "./dist/site",
     // 找不到的路径返回 404，不回落成 index.html：
     // 这是个单页资料站，没有前端路由，回落只会把错误地址伪装成正常页面。
-    "not_found_handling": "404-page"
+    "not_found_handling": "404-page",
+    // 静态资源优先：存在同名文件就直接返回，不进 Worker 脚本。
+    "run_worker_first": false
   }
 }
