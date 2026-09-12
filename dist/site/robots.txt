@@ -1,0 +1,14 @@
+# 不要收录本站：技能表来自第三方整理，译名来自汉化组，属于二次分发。
+# 有链接的人可以正常访问，但不希望出现在搜索结果里。
+User-agent: *
+Disallow: /
+
+# 常见的 AI 训练爬虫也一并拒绝
+User-agent: GPTBot
+Disallow: /
+
+User-agent: CCBot
+Disallow: /
+
+User-agent: Google-Extended
+Disallow: /

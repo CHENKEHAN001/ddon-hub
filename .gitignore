@@ -1,0 +1,24 @@
+# 依赖：体积大、可由 package.json 还原
+node_modules/
+
+# ---------------------------------------------------------------- 交付物（不进仓库）
+# exe 是 89 MB 的构建产物，每次都变，进仓库只会让它无限膨胀。
+# 需要发给别人时用 `node build/make-exe.js` 现做，几分钟的事。
+dist/ddon-hub-portable.exe
+
+# 打包中间件（blob、注入前的 exe 副本）
+build/_stage/
+
+# 检查脚本留下的截图与调试文件（前缀下划线的是临时件）
+build/_*.png
+build/_*.zip
+build/_*.js
+build/_icon_from_exe.png
+
+# ---------------------------------------------------------------- 生成物（保留，故意提交）
+# 下面这些是脚本生成的，但刻意提交进仓库，理由有二：
+#   1. Cloudflare 的 Git 构建不需要跑任何命令，直接把 dist/site 当静态目录发出去，
+#      所以产物必须在仓库里；
+#   2. 只克隆仓库、没有本机那个 DSH 插件的人，也能直接构建出 exe 和页面。
+# 它们是：src/data.js、src/manifest.js、src/assets-inline.js、
+#        dist/site/index.html、dist/DDON资料站-手机版.html
