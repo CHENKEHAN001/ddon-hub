@@ -22,3 +22,6 @@ build/_icon_from_exe.png
 #   2. 只克隆仓库、没有本机那个 DSH 插件的人，也能直接构建出 exe 和页面。
 # 它们是：src/data.js、src/manifest.js、src/assets-inline.js、
 #        dist/site/index.html、dist/DDON资料站-手机版.html
+
+# ��ʱ�ύ��Ϣ�ļ�����Ҫ�ύ
+commit-msg.txt
