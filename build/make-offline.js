@@ -87,6 +87,9 @@ input{min-height:34px;padding:6px 10px}
 #codexSearch{width:100%!important;box-sizing:border-box;margin:6px 0}
 .codexCard{margin-bottom:7px}
 .codexPlaces{max-width:38ch;white-space:normal;line-height:1.5}
+/* 详情行是展开行的附属内容，不是可点行；要盖掉 tbody tr 的 cursor:pointer */
+.codexDetailRow{cursor:default}
+.codexDetailRow:hover{background:transparent}
 .jobs{gap:6px;margin:8px 0}
 .job{padding:6px 13px;font-size:13.5px;min-height:32px;display:inline-flex;align-items:center}
 .toolbar{gap:6px}
@@ -355,6 +358,15 @@ const JS = String.raw`
     return rows
   }
 
+  /* 掉落率：上游这一列多数是 0..1 的小数（含 1，即 100%），少数直接是 100
+     （已是百分比）。单位必须推断而不是假定——一律乘 100 会让 100 变 10000%，
+     而把 1 当百分比又会把 100% 读成 1%。分界取 1.5，上游没有落在这中间的取值。 */
+  function chanceText(value){
+    var chance = Number(value)
+    if (!isFinite(chance) || chance <= 0) return '0%'
+    return chance <= 1.5 ? String(Math.round(chance * 1000) / 10) + '%' : String(chance) + '%'
+  }
+
   /** 一只怪物（或一个地点）身上的全部掉落，去重后按掉落表原顺序列出。 */
   function codexDrops(entry){
     var codex = codexData()
@@ -372,7 +384,7 @@ const JS = String.raw`
         var item = table.items[y]
         var named = codex.itemNames ? codex.itemNames[item[0]] : null
         var label = named ? (named.zh || named.ja || named.en || item[0]) : item[0]
-        html += '<span class="numChip">' + esc(label) + ' <b>' + esc(item[3]) + '%</b>'
+        html += '<span class="numChip">' + esc(label) + ' <b>' + esc(chanceText(item[3])) + '</b>'
         if (item[1] !== item[2]) html += ' ×' + esc(item[1]) + '-' + esc(item[2])
         html += '</span>'
       }
@@ -419,6 +431,9 @@ const JS = String.raw`
       html += '<span class="numChip">生成点 <b>' + entry.n + '</b></span>'
       html += '</div>'
       html += '<div class="skillNote">' + (isMonster ? '出现地点：' : '出现怪物：') + esc(others.join('、')) + '</div>'
+      /* 展开内容就长在这张卡片里；早先写到页面底部的独立面板再 scrollIntoView，
+         实测点第一行会把视口甩出 19471 px。 */
+      if (open) html += codexDetailHtml(state.codexView + ':' + entry.id)
       html += '</div>'
     }
     el('codexList').innerHTML = rows.length === 0 ? '<div class="empty">没有匹配的怪物或地点</div>' : html
@@ -445,6 +460,10 @@ const JS = String.raw`
         table += '<td class="num">' + esc(codexLevel(item.min, item.max)) + '</td>'
         table += '<td class="num">' + refs.length + '</td><td class="num">' + item.n + '</td>'
         table += '</tr>'
+        /* 详情紧跟在那一行下面，不跳到页面别处 */
+        if (isOpen){
+          table += '<tr class="codexDetailRow"><td colspan="6">' + codexDetailHtml(state.codexView + ':' + item.id) + '</td></tr>'
+        }
       }
       table += '</tbody></table>'
       host.innerHTML = rows.length === 0 ? '' : table
@@ -452,22 +471,20 @@ const JS = String.raw`
 
     var stats = codex.stats || {}
     if (el('codexMeta')) el('codexMeta').textContent = rows.length + ' 行 · ' + (stats.monsters || 0) + ' 种怪物 · ' + (stats.locations || 0) + ' 个地点 · ' + (stats.spots || 0) + ' 条生成记录 · 译名来自汉化包'
-
-    if (state.codexOpen !== null) renderCodexDetail()
-    else if (el('codexDetail')) el('codexDetail').innerHTML = ''
   }
 
-  function renderCodexDetail(){
-    if (!codexData() || state.codexOpen === null){ if (el('codexDetail')) el('codexDetail').innerHTML = ''; return }
+  /** 一行的展开内容；返回空串表示这一行没有可展开的东西。 */
+  function codexDetailHtml(key){
+    if (!codexData() || !key) return ''
     var codex = codexData()
-    var parts = state.codexOpen.split(':')
+    var parts = key.split(':')
     var isMonster = parts[0] !== 'stage'
     var id = parts.slice(1).join(':')
     var index = codexIndex()
     var list = isMonster ? index.byMonster : index.byStage
     var entry = null
     for (var i = 0; i < list.length; i++) if (list[i].id === id){ entry = list[i]; break }
-    if (entry === null){ el('codexDetail').innerHTML = ''; return }
+    if (entry === null) return ''
 
     var html = '<div class="detail">'
     html += '<div class="detailGrid">'
@@ -485,7 +502,7 @@ const JS = String.raw`
     html += '</div>'
     html += '<div class="foot" style="margin-top:8px"><div class="footRow"><span>数据来源</span><span>' + esc(codex.legend || '') + '</span></div></div>'
     html += '</div>'
-    el('codexDetail').innerHTML = html
+    return html
   }
 
   function onCodexClick(event){
@@ -508,11 +525,9 @@ const JS = String.raw`
     if (rowNode){
       var key = rowNode.getAttribute('data-codex')
       state.codexOpen = state.codexOpen === key ? null : key
+      /* 详情内联在那一行（或那张卡片）里，所以不滚——早先滚到页面底部的独立
+         面板，实测点第一行会把视口甩出 19471 px。 */
       renderCodex()
-      if (state.codexOpen !== null){
-        var node = el('codexDetail')
-        if (node && node.scrollIntoView) node.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
-      }
     }
   }
 
@@ -1076,8 +1091,15 @@ const JS = String.raw`
       return
     }
 
-    /* 展开详表：手机点卡片，宽屏点表格行 */
-    var card2 = t.closest ? t.closest('.skill, tbody tr') : null
+    /*
+     * 展开技能详表：手机点卡片，宽屏点表格行。
+     *
+     * 必须限定在技能区里。早先这里只写 closest('.skill, tbody tr')，而怪物图鉴
+     * 的每一行也是 tbody tr —— 点图鉴行会被当成技能行，data-ja/data-zh 取回 null，
+     * 于是选中一个空技能并调 renderDetail()，那个面板一 scrollIntoView 就把视口
+     * 甩到页面底部（实测 0 -> 20249 px）。表现就是"点有的怪物会跳过头"。
+     */
+    var card2 = t.closest ? t.closest('#skills .skill, #skillsTable tbody tr') : null
     if (card2){
       var ja = card2.getAttribute('data-ja'), zh = card2.getAttribute('data-zh')
       if (state.selected !== null && state.selected.ja === ja && state.selected.zh === zh) state.selected = null
@@ -1207,7 +1229,6 @@ ${ASSETS.favicon === null || hosted ? '' : `<link rel="apple-touch-icon" href="$
   <div class="toolbar"><span class="tag" id="codexMeta"></span></div>
   <div id="codexList"></div>
   <div id="codexTable" class="wideWrap"></div>
-  <div id="codexDetail"></div>
 
   <h2>职业技能数据</h2>
   <input id="search" placeholder="搜索技能名、中文名或备注">
@@ -1297,7 +1318,7 @@ function checkPage(html, label) {
     throw new Error(`${label}: the monster codex looks too small to be the real one`)
   }
   for (const id of ['live', 'links', 'jobs', 'skills', 'detail', 'sort', 'legend', 'editState',
-                    'codexSearch', 'codexList', 'codexTable', 'codexDetail', 'codexMeta']) {
+                    'codexSearch', 'codexList', 'codexTable', 'codexMeta']) {
     if (!html.includes(`id="${id}"`)) throw new Error(`${label}: the page has no #${id} container`)
   }
   return boot

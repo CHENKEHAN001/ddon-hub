@@ -109,6 +109,9 @@ h2{margin:22px 0 8px;font-size:14px;font-weight:600;color:var(--dim)}
 /* 怪物图鉴的「出现地点 / 出现怪物」列：这些就是图鉴要回答的答案，所以让它换行
    显示而不是被截断；同时限宽，免得某只怪物带二十个地点时把等级列顶出屏幕。 */
 .codexPlaces{max-width:38ch;white-space:normal;line-height:1.5}
+/* 详情行是被展开的那一行的附属内容，不是可点行；鼠标样式必须盖掉 tbody tr 的 */
+.codexDetailRow{cursor:default}
+.codexDetailRow:hover{background:transparent}
 table{border-collapse:separate;border-spacing:0;width:100%;font-size:12.5px}
 th{position:sticky;top:0;z-index:1;background:var(--panel);border-bottom:1px solid var(--line);padding:7px 9px;text-align:left;font-weight:600;white-space:nowrap;color:var(--dim)}
 th.sortable{cursor:pointer;user-select:none}
@@ -284,6 +287,15 @@ const JS = `
     return rows
   }
 
+  /* 掉落率：上游这一列多数是 0..1 的小数（含 1，即 100%），少数直接是 100
+     （已是百分比）。单位必须推断而不是假定——一律乘 100 会让 100 变 10000%，
+     而把 1 当百分比又会把 100% 读成 1%。分界取 1.5，上游没有落在这中间的取值。 */
+  function chanceText(value){
+    var chance = Number(value)
+    if (!isFinite(chance) || chance <= 0) return '0%'
+    return chance <= 1.5 ? String(Math.round(chance * 1000) / 10) + '%' : String(chance) + '%'
+  }
+
   function renderCodexTabs(){
     var html = ''
     var views = [['monster', '按怪物'], ['stage', '按地点']]
@@ -333,6 +345,9 @@ const JS = `
       html += '<td class="num">' + String(ids.length) + '</td>'
       html += '<td class="num">' + String(entry.n) + '</td>'
       html += '</tr>'
+      /* 详情插在那一行底下，而不是页面别处的独立面板：早先写到 #codexDetail
+         再 scrollIntoView，实测点第一行会把视口甩出 19471 px。 */
+      if (open) html += codexDetailRows(state.codexView + ':' + entry.id)
     }
     html += '</tbody></table>'
     el('codexWrap').innerHTML = rows.length === 0 ? '<div class="empty">没有匹配的怪物或地点</div>' : html
@@ -340,14 +355,19 @@ const JS = `
     var monsters = codex.monsters || {}
     var stages = codex.stages || {}
     el('codexMeta').textContent = rows.length + ' 行　·　' + (stats.monsters || 0) + ' 种怪物　·　' + (stats.locations || 0) + ' 个地点　·　' + (stats.spots || 0) + ' 条生成记录　·　译名来自汉化包'
-    if (state.codexOpen !== null) renderCodexDetail()
-    else el('codexDetail').innerHTML = ''
   }
 
-  function renderCodexDetail(){
+  /** 一行的展开内容，包成表格行，紧跟在它下面。 */
+  function codexDetailRows(key){
+    var body = codexDetailHtml(key)
+    if (body === '') return ''
+    return '<tr class="codexDetailRow"><td colspan="6">' + body + '</td></tr>'
+  }
+
+  function codexDetailHtml(key){
     var codex = codexData()
-    if (!codex || state.codexOpen === null){ el('codexDetail').innerHTML = ''; return }
-    var parts = state.codexOpen.split(':')
+    if (!codex || !key) return ''
+    var parts = key.split(':')
     var view = parts[0]
     var id = parts.slice(1).join(':')
     var isMonster = view !== 'stage'
@@ -355,7 +375,7 @@ const JS = `
     var entry = null
     var list = isMonster ? index.byMonster : index.byStage
     for (var i = 0; i < list.length; i++) if (list[i].id === id){ entry = list[i]; break }
-    if (entry === null){ el('codexDetail').innerHTML = ''; return }
+    if (entry === null) return ''
 
     var html = '<div class="detail"><div class="detailGrid"><div class="kv"><span class="kvKey">' + (isMonster ? '怪物' : '地点') + '</span><span class="kvVal">'
     html += esc(isMonster ? codexName(codex.monsters, id, id) : codexName(codex.stages, id, id))
@@ -382,7 +402,7 @@ const JS = `
         var item = table.items[y]
         var named = codex.itemNames ? codex.itemNames[item[0]] : null
         var itemLabel = named ? (named.zh || named.ja || named.en || item[0]) : item[0]
-        html += '<span class="numChip">' + esc(itemLabel) + ' <b>' + esc(item[3]) + '%</b>'
+        html += '<span class="numChip">' + esc(itemLabel) + ' <b>' + esc(chanceText(item[3])) + '</b>'
         if (item[1] !== item[2]) html += ' ×' + esc(item[1]) + '-' + esc(item[2])
         html += '</span>'
       }
@@ -390,7 +410,7 @@ const JS = `
     html += '</span></div></div>'
     html += '<div class="tag" style="margin-top:8px">' + esc(codex.legend || '') + '</div>'
     html += '</div>'
-    el('codexDetail').innerHTML = html
+    return html
   }
 
   function mountCodex(){
@@ -425,11 +445,9 @@ const JS = `
       var key = rowNode.getAttribute('data-codex')
       if (key === null) return
       state.codexOpen = state.codexOpen === key ? null : key
+      /* 详情内联在那一行下面，所以这里不需要滚——早先滚到页面底部的独立面板，
+         实测点第一行会把视口甩出 19471 px。 */
       renderCodex()
-      if (state.codexOpen !== null){
-        var node = el('codexDetail')
-        if (node && node.scrollIntoView) node.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
-      }
     }
   }
 
@@ -878,9 +896,8 @@ ${ASSETS.favicon === null ? '' : `<link rel="icon" type="image/png" href="${ASSE
   <h2>怪物图鉴 · 出现地点与等级</h2>
   <div id="codexPanel" style="display:none">
     <div class="jobs" id="codexTabs"></div>
-    <div class="toolbar"><span class="tag" id="codexMeta"></span><span class="spacer"></span><span class="tag">点行展开该怪物/地点的全部生成点与掉落表</span></div>
+    <div class="toolbar"><span class="tag" id="codexMeta"></span><span class="spacer"></span><span class="tag">点行展开：生成点与掉落表就长在这一行下面</span></div>
     <div class="tableWrap" id="codexWrap"></div>
-    <div id="codexDetail"></div>
   </div>
 
   <h2>职业技能数据</h2>
