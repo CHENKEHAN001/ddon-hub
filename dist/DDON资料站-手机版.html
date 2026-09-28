@@ -353,6 +353,21 @@ a.chip:hover{border-color:var(--dim);color:var(--fg)}
     return row.zh || row.ja || row.en || (fallback === undefined ? '' : fallback)
   }
 
+  /*
+   * 中文 + 日文原文：「法拉納平原 ファーラナ平原」。
+   *
+   * 图鉴要回答的就是「游戏里看到的那串日文对应什么」，只给中文等于只答一半。
+   * 两者相同（没有中文译名的条目）时只显示一个，免得出现「モロー樹林 モロー樹林」。
+   * 注意：这段注释也在这个 String.raw 模板里，正文里不能出现反引号——见文件头说明。
+   */
+  function namePair(dict, id, fallback){
+    var zh = codexName(dict, id, fallback)
+    var row = dict ? dict[id] : null
+    var ja = row ? (row.ja || '') : ''
+    if (ja === '' || ja === zh) return zh
+    return zh + ' ' + ja
+  }
+
   function codexKeys(map){
     var out = []
     for (var key in map) if (Object.prototype.hasOwnProperty.call(map, key)) out.push(key)
@@ -486,7 +501,8 @@ a.chip:hover{border-color:var(--dim);color:var(--fg)}
       var ids = isMonster ? codexKeys(entry.places) : codexKeys(entry.kinds)
       var others = []
       for (var k = 0; k < ids.length; k++){
-        others.push(isMonster ? codexName(codex.stages, ids[k], ids[k]) : codexName(codex.monsters, ids[k], ids[k]))
+        /* 出现地点带日文原文；按地点看时列的是怪物，怪物名已有独立列，不重复贴 */
+        others.push(isMonster ? namePair(codex.stages, ids[k], ids[k]) : codexName(codex.monsters, ids[k], ids[k]))
       }
       var open = state.codexOpen === (state.codexView + ':' + entry.id)
       html += '<div class="skill codexCard' + (open ? ' on' : '') + '" data-codex="' + esc(state.codexView + ':' + entry.id) + '">'
@@ -517,7 +533,7 @@ a.chip:hover{border-color:var(--dim);color:var(--fg)}
         var refs = isMonster ? codexKeys(item.places) : codexKeys(item.kinds)
         var refNames = []
         for (var r = 0; r < refs.length; r++){
-          refNames.push(isMonster ? codexName(codex.stages, refs[r], refs[r]) : codexName(codex.monsters, refs[r], refs[r]))
+          refNames.push(isMonster ? namePair(codex.stages, refs[r], refs[r]) : codexName(codex.monsters, refs[r], refs[r]))
         }
         var isOpen = state.codexOpen === (state.codexView + ':' + item.id)
         table += '<tr class="' + (isOpen ? 'on' : '') + '" data-codex="' + esc(state.codexView + ':' + item.id) + '">'
@@ -560,7 +576,7 @@ a.chip:hover{border-color:var(--dim);color:var(--fg)}
     html += '<div class="kv"><span class="kvKey">生成点</span><span class="kvVal">'
     var spots = entry.rows.slice().sort(function(a, b){ return a.min - b.min })
     for (var j = 0; j < spots.length; j++){
-      var where = isMonster ? codexName(codex.stages, spots[j].s, spots[j].s) : codexName(codex.monsters, spots[j].m, spots[j].m)
+      var where = isMonster ? namePair(codex.stages, spots[j].s, spots[j].s) : codexName(codex.monsters, spots[j].m, spots[j].m)
       html += '<span class="numChip">' + esc(where) + ' <b>' + esc(codexLevel(spots[j].min, spots[j].max)) + '</b></span>'
     }
     html += '</span></div>'

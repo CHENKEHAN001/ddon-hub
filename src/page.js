@@ -216,6 +216,21 @@ const JS = `
     return row.zh || row.ja || row.en || (fallback === undefined ? '' : fallback)
   }
 
+  /**
+   * 中文 + 日文原文：「法拉納平原 ファーラナ平原」。
+   *
+   * 图鉴要回答的就是「游戏里看到的那串日文对应什么」，所以只给中文等于只答一半。
+   * 两者相同（没有中文译名的条目）时只显示一个，免得出现「モロー樹林 モロー樹林」。
+   * 注意：这段注释在 JS 模板字符串里，不能出现反引号——见 make-offline 的说明。
+   */
+  function namePair(dict, id, fallback){
+    var zh = codexName(dict, id, fallback)
+    var row = dict ? dict[id] : null
+    var ja = row ? (row.ja || '') : ''
+    if (ja === '' || ja === zh) return zh
+    return zh + ' ' + ja
+  }
+
   function codexIndex(){
     if (state.codexIndex !== null) return state.codexIndex
     var codex = codexData()
@@ -334,7 +349,9 @@ const JS = `
       var other = []
       var ids = isMonster ? keys(entry.places) : keys(entry.kinds)
       for (var k = 0; k < ids.length; k++){
-        other.push(isMonster ? codexName(codex.stages, ids[k], ids[k]) : codexName(codex.monsters, ids[k], ids[k]))
+        /* 出现地点带日文原文（图鉴就是用来对日文的）；按地点看时列的是怪物，怪物名
+           已有独立列，就不重复贴日文。 */
+        other.push(isMonster ? namePair(codex.stages, ids[k], ids[k]) : codexName(codex.monsters, ids[k], ids[k]))
       }
       var open = state.codexOpen === (state.codexView + ':' + entry.id)
       html += '<tr class="' + (open ? 'on' : '') + '" data-codex="' + esc(state.codexView + ':' + entry.id) + '">'
@@ -384,7 +401,7 @@ const JS = `
     var spots = entry.rows.slice().sort(function(a, b){ return a.min - b.min })
     for (var j = 0; j < spots.length; j++){
       var spot = spots[j]
-      var where = isMonster ? codexName(codex.stages, spot.s, spot.s) : codexName(codex.monsters, spot.m, spot.m)
+      var where = isMonster ? namePair(codex.stages, spot.s, spot.s) : codexName(codex.monsters, spot.m, spot.m)
       html += '<span class="numChip">' + esc(where) + ' <b>' + esc(levelText(spot.min, spot.max)) + '</b></span>'
     }
     html += '</span></div>'
