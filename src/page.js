@@ -461,11 +461,46 @@ const JS = `
     if (rowNode){
       var key = rowNode.getAttribute('data-codex')
       if (key === null) return
-      state.codexOpen = state.codexOpen === key ? null : key
-      /* 详情内联在那一行下面，所以这里不需要滚——早先滚到页面底部的独立面板，
-         实测点第一行会把视口甩出 19471 px。 */
-      renderCodex()
+      toggleCodexRow(key)
     }
+  }
+
+  /*
+   * 展开/收起一行，同时保持这一行在屏幕上的位置不变。
+   *
+   * 展开的内容长在被点行的下面，把这一行自己往下挤（实测 38~300px），看起来就是
+   * "点一下跳到下面"；页面本身并没有被滚走。补偿时要先关掉浏览器的滚动锚定，
+   * 否则它会在 innerHTML 重建时自己改滚动位置，跟补偿打架。
+   */
+  function toggleCodexRow(key){
+    var mainRow = findCodexRow(key)
+    if (!mainRow) return
+    var anchorBottom = mainRow.getBoundingClientRect().bottom
+    var next = state.codexOpen === key ? null : key
+    var root = document.documentElement
+    var previousAnchor = root.style.overflowAnchor
+    root.style.overflowAnchor = 'none'
+    state.codexOpen = next
+    renderCodex()
+    if (next === null){ root.style.overflowAnchor = previousAnchor; return }
+    requestAnimationFrame(function(){
+      var fresh = findCodexRow(key)
+      if (fresh){
+        var delta = fresh.getBoundingClientRect().bottom - anchorBottom
+        if (Math.abs(delta) > 1) window.scrollTo(0, window.scrollY + delta)
+      }
+      root.style.overflowAnchor = previousAnchor
+    })
+  }
+
+  /** 第一个真正可见的图鉴行（宽屏表格行 / 窄屏卡片，另一个是 display:none）。 */
+  function findCodexRow(key){
+    var nodes = document.querySelectorAll('[data-codex="' + key + '"]')
+    for (var i = 0; i < nodes.length; i++){
+      var rect = nodes[i].getBoundingClientRect()
+      if (rect.width > 0 && rect.height > 0) return nodes[i]
+    }
+    return nodes.length > 0 ? nodes[0] : null
   }
 
   function renderJobs(){
@@ -589,6 +624,27 @@ const JS = `
       }
     }
     el('detail').innerHTML = html
+  }
+
+  /**
+   * 渲染技能详表，同时保持视口位置：详表在页面底部，展开/收起会把它下面的内容
+   * 推走或拉回，看起来就是"页面自己跳了一下"。截图里点技能行时的跳动就来自这里。
+   * （图鉴那边是同源问题，用 toggleCodexRow 的补偿解决。）
+   */
+  function renderDetailKeeping(){
+    var anchor = el('detail').getBoundingClientRect().bottom
+    var root = document.documentElement
+    var previousAnchor = root.style.overflowAnchor
+    root.style.overflowAnchor = 'none'
+    renderDetail()
+    requestAnimationFrame(function(){
+      var node = el('detail')
+      if (node){
+        var delta = node.getBoundingClientRect().bottom - anchor
+        if (Math.abs(delta) > 1) window.scrollTo(0, window.scrollY + delta)
+      }
+      root.style.overflowAnchor = previousAnchor
+    })
   }
 
   function renderLive(){
@@ -809,12 +865,31 @@ const JS = `
     if (rowNode){
       var ja = rowNode.getAttribute('data-ja')
       var zh = rowNode.getAttribute('data-zh')
-      if (state.selected !== null && state.selected.ja === ja && state.selected.zh === zh) state.selected = null
-      else state.selected = { ja: ja, zh: zh }
-      renderTable(); renderDetail()
-      if (state.selected !== null){
-        var node = el('detail')
-        if (node && node.scrollIntoView) node.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+      if (state.selected !== null && state.selected.ja === ja && state.selected.zh === zh){
+        state.selected = null
+        renderTable(); renderDetail()
+      } else {
+        state.selected = { ja: ja, zh: zh }
+        /* 详表撑在页面底部，展开后把这一行挤走，看起来就是"点一下跳到下面"。
+           所以记下这一行展开前的位置，下一帧补回来；不再 scrollIntoView。
+           补偿期间关掉滚动锚定，否则它会和补偿抢着改滚动位置。 */
+        var rowBottom = rowNode.getBoundingClientRect().bottom
+        var root2 = document.documentElement
+        var anchorBefore = root2.style.overflowAnchor
+        root2.style.overflowAnchor = 'none'
+        renderTable(); renderDetail()
+        requestAnimationFrame(function(){
+          var fresh = null
+          var all = document.querySelectorAll('#skillsTable tbody tr')
+          for (var i = 0; i < all.length; i++){
+            if (all[i].getAttribute('data-ja') === ja && all[i].getAttribute('data-zh') === zh){ fresh = all[i]; break }
+          }
+          if (fresh){
+            var delta = fresh.getBoundingClientRect().bottom - rowBottom
+            if (Math.abs(delta) > 1) window.scrollTo(0, window.scrollY + delta)
+          }
+          root2.style.overflowAnchor = anchorBefore
+        })
       }
       return
     }
