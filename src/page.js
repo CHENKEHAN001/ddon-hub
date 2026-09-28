@@ -274,23 +274,60 @@ const JS = `
 
   function levelText(min, max){ return min === max ? 'Lv' + min : 'Lv' + min + '-' + max }
 
+  /*
+   * 把繁体字换成简体，好让简体键盘也能搜到。
+   *
+   * 汉化包用的是繁体（戰士 / 骷髏騎士 / 獵人），而大多数人用简体输入。快照自带
+   * charMap（按数据里出现过的字生成），这里把「用户输入」和「数据里的名字」都
+   * 规范化到简体再比。方向只做繁 -> 简：查得到的字必然在表里，反过来把简体变繁体
+   * 会碰到一对多（干 <- 乾/幹）。
+   */
+  function codexFold(text){
+    if (!text) return ''
+    var codex = codexData()
+    var map = codex && codex.charMap
+    if (!map) return String(text).toLowerCase()
+    var out = ''
+    for (var i = 0; i < text.length; i++){
+      var ch = text.charAt(i)
+      out += (map[ch] || ch)
+    }
+    return out.toLowerCase()
+  }
+
+  /*
+   * 当前视图下的过滤结果。
+   *
+   * 搜索跨视图：搜的是地名而当前在「按怪物」（或反过来）会自动切过去。早先只在
+   * 当前视图里过滤，搜「黑咒迷宫」在按怪物视图下就是空的——用户看到的是"搜不到"，
+   * 而他并不知道要先切视图。查询词本身就能说明该看哪一边。
+   */
   function codexRows(){
     var codex = codexData()
     var index = codexIndex()
-    var source = state.codexView === 'stage' ? index.byStage : index.byMonster
-    var needle = state.codexQuery.trim().toLowerCase()
-    var rows = []
-    for (var i = 0; i < source.length; i++){
-      var entry = source[i]
-      if (needle !== ''){
+    var needle = codexFold(state.codexQuery.trim())
+
+    function matches(entries){
+      if (needle === '') return entries.slice()
+      return entries.filter(function(entry){
         var row = entry.row
-        var hit = entry.id.toLowerCase().indexOf(needle) >= 0
-        if (!hit && row.zh && row.zh.toLowerCase().indexOf(needle) >= 0) hit = true
-        if (!hit && row.ja && row.ja.toLowerCase().indexOf(needle) >= 0) hit = true
-        if (!hit && row.en && row.en.toLowerCase().indexOf(needle) >= 0) hit = true
-        if (!hit) continue
+        if (entry.id.toLowerCase().indexOf(needle) >= 0) return true
+        if (row.zh && codexFold(row.zh).indexOf(needle) >= 0) return true
+        if (row.ja && row.ja.toLowerCase().indexOf(needle) >= 0) return true
+        if (row.en && row.en.toLowerCase().indexOf(needle) >= 0) return true
+        return false
+      })
+    }
+
+    var rows = matches(state.codexView === 'stage' ? index.byStage : index.byMonster)
+    if (needle !== '' && rows.length === 0){
+      var otherView = state.codexView === 'stage' ? 'monster' : 'stage'
+      var otherHits = matches(otherView === 'stage' ? index.byStage : index.byMonster)
+      if (otherHits.length > 0){
+        state.codexView = otherView
+        renderCodexTabs()
+        rows = otherHits
       }
-      rows.push(entry)
     }
     var sort = state.codexSort
     var dict = state.codexView === 'stage' ? codex.stages : codex.monsters
