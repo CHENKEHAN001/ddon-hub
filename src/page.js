@@ -112,6 +112,16 @@ h2{margin:22px 0 8px;font-size:14px;font-weight:600;color:var(--dim)}
 /* 详情行是被展开的那一行的附属内容，不是可点行；鼠标样式必须盖掉 tbody tr 的 */
 .codexDetailRow{cursor:default}
 .codexDetailRow:hover{background:transparent}
+/* 地点与掉落左右对齐：每个地点一行，右边是该地点的掉落；窄屏自动变上下两行 */
+.dropTable{display:flex;flex-direction:column;gap:4px;margin-top:2px}
+.dropRow{display:grid;grid-template-columns:minmax(160px,220px) 1fr;gap:2px 12px;padding:4px 0;border-top:1px solid var(--line)}
+.dropRow:first-child{border-top:0}
+.dropPlace{font-weight:600;word-break:break-word}
+.dropLv{color:var(--dim);font-weight:400;font-size:11.5px;font-variant-numeric:tabular-nums}
+.dropItems{display:flex;flex-wrap:wrap;gap:5px}
+@media (max-width:720px){
+  .dropRow{grid-template-columns:1fr;gap:3px}
+}
 table{border-collapse:separate;border-spacing:0;width:100%;font-size:12.5px}
 th{position:sticky;top:0;z-index:1;background:var(--panel);border-bottom:1px solid var(--line);padding:7px 9px;text-align:left;font-weight:600;white-space:nowrap;color:var(--dim)}
 th.sortable{cursor:pointer;user-select:none}
@@ -433,35 +443,43 @@ const JS = `
 
     var html = '<div class="detail"><div class="detailGrid"><div class="kv"><span class="kvKey">' + (isMonster ? '怪物' : '地点') + '</span><span class="kvVal">'
     html += esc(isMonster ? codexName(codex.monsters, id, id) : codexName(codex.stages, id, id))
-    html += '　<span class="tag">' + esc(entry.row.ja || '') + '</span></span></div>'
-    html += '<div class="kv"><span class="kvKey">生成点</span><span class="kvVal"><span class="numChip">共 <b>' + String(entry.n) + '</b> 个</span>'
-    var spots = entry.rows.slice().sort(function(a, b){ return a.min - b.min })
+    html += '　<span class="tag">' + esc(entry.row.ja || '') + '</span>'
+    html += '<span class="tag">' + String(entry.rows.length) + ' 个地点</span></span></div>'
+    html += '</div>'
+    /*
+     * 地点与掉落同一行、左右对齐。掉落表本来就是按地点分的（同一只怪在不同地点
+     * 可能是不同的表），分开两栏会丢掉"这个点掉什么"。按等级升序。
+     */
+    html += '<div class="dropTable">'
+    var spots = entry.rows.slice().sort(function(a, b){ return (a.min - b.min) || 0 })
     for (var j = 0; j < spots.length; j++){
       var spot = spots[j]
-      var where = isMonster ? namePair(codex.stages, spot.s, spot.s) : codexName(codex.monsters, spot.m, spot.m)
-      html += '<span class="numChip">' + esc(where) + ' <b>' + esc(levelText(spot.min, spot.max)) + '</b></span>'
-    }
-    html += '</span></div>'
-    var tableIds = []
-    for (var t = 0; t < entry.rows.length; t++){
-      var drops = entry.rows[t].d || []
-      for (var d = 0; d < drops.length; d++) if (tableIds.indexOf(drops[d]) < 0) tableIds.push(drops[d])
-    }
-    html += '<div class="kv"><span class="kvKey">掉落</span><span class="kvVal">'
-    if (tableIds.length === 0) html += '<span class="tag">该生成点没有掉落表</span>'
-    for (var x = 0; x < tableIds.length; x++){
-      var table = codex.drops[String(tableIds[x])]
-      if (!table) continue
-      for (var y = 0; y < table.items.length; y++){
-        var item = table.items[y]
-        var named = codex.itemNames ? codex.itemNames[item[0]] : null
-        var itemLabel = named ? (named.zh || named.ja || named.en || item[0]) : item[0]
-        html += '<span class="numChip">' + esc(itemLabel) + ' <b>' + esc(chanceText(item[3])) + '</b>'
-        if (item[1] !== item[2]) html += ' ×' + esc(item[1]) + '-' + esc(item[2])
-        html += '</span>'
+      var where = isMonster ? namePair(codex.stages, spot.s, spot.s) : namePair(codex.monsters, spot.m, spot.m)
+      var tableIds = []
+      var raw = spot.d || []
+      for (var d = 0; d < raw.length; d++){
+        if (raw[d] > 0 && codex.drops[String(raw[d])]) tableIds.push(raw[d])
       }
+      html += '<div class="dropRow">'
+      html += '<span class="dropPlace">' + esc(where) + ' <span class="dropLv">' + esc(levelText(spot.min, spot.max)) + '</span></span>'
+      html += '<span class="dropItems">'
+      if (tableIds.length === 0){
+        html += '<span class="tag">无掉落表</span>'
+      } else {
+        for (var x = 0; x < tableIds.length; x++){
+          var table = codex.drops[String(tableIds[x])]
+          for (var y = 0; y < table.items.length; y++){
+            var item = table.items[y]
+            var named = codex.itemNames ? codex.itemNames[item[0]] : null
+            html += '<span class="numChip">' + esc(namePair(named, item[0])) + ' <b>' + esc(chanceText(item[3])) + '</b>'
+            if (item[1] !== item[2]) html += ' ×' + esc(item[1]) + '-' + esc(item[2])
+            html += '</span>'
+          }
+        }
+      }
+      html += '</span></div>'
     }
-    html += '</span></div></div>'
+    html += '</div>'
     html += '<div class="tag" style="margin-top:8px">' + esc(codex.legend || '') + '</div>'
     html += '</div>'
     return html

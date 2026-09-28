@@ -90,6 +90,16 @@ input{min-height:34px;padding:6px 10px}
 /* 详情行是展开行的附属内容，不是可点行；要盖掉 tbody tr 的 cursor:pointer */
 .codexDetailRow{cursor:default}
 .codexDetailRow:hover{background:transparent}
+/* 地点与掉落左右对齐：每个地点一行，右边是该地点的掉落。窄屏自动变上下两行 */
+.dropTable{display:flex;flex-direction:column;gap:4px;margin-top:2px}
+.dropRow{display:grid;grid-template-columns:minmax(160px,220px) 1fr;gap:2px 12px;padding:4px 0;border-top:1px solid var(--line)}
+.dropRow:first-child{border-top:0}
+.dropPlace{font-weight:600;word-break:break-word}
+.dropLv{color:var(--dim);font-weight:400;font-size:11.5px;font-variant-numeric:tabular-nums}
+.dropItems{display:flex;flex-wrap:wrap;gap:5px}
+@media (max-width:720px){
+  .dropRow{grid-template-columns:1fr;gap:3px}
+}
 .jobs{gap:6px;margin:8px 0}
 .job{padding:6px 13px;font-size:13.5px;min-height:32px;display:inline-flex;align-items:center}
 .toolbar{gap:6px}
@@ -420,6 +430,19 @@ const JS = String.raw`
     return ja === '' || ja === zh ? zh : zh + ' ' + ja
   }
 
+  /** 一张掉落表的小胶囊，例如「優質白骨 上質の白骨 80% ×1-3」。 */
+  function dropChipsHtml(table, codex){
+    var html = ''
+    for (var i = 0; i < table.items.length; i++){
+      var item = table.items[i]
+      var named = codex.itemNames ? codex.itemNames[item[0]] : null
+      html += '<span class="numChip">' + esc(itemPair(named, item[0])) + ' <b>' + esc(chanceText(item[3])) + '</b>'
+      if (item[1] !== item[2]) html += ' ×' + esc(item[1]) + '-' + esc(item[2])
+      html += '</span>'
+    }
+    return html
+  }
+
   function codexRows(){
     var codex = codexData()
     if (!codex) return []
@@ -470,30 +493,14 @@ const JS = String.raw`
     return chance <= 1.5 ? String(Math.round(chance * 1000) / 10) + '%' : String(chance) + '%'
   }
 
-  /** 一只怪物（或一个地点）身上的全部掉落，去重后按掉落表原顺序列出。 */
-  function codexDrops(entry){
-    var codex = codexData()
-    var ids = []
-    for (var i = 0; i < entry.rows.length; i++){
-      var list = entry.rows[i].d || []
-      for (var j = 0; j < list.length; j++) if (ids.indexOf(list[j]) < 0) ids.push(list[j])
-    }
-    if (ids.length === 0) return '<span class="tag">该生成点没有掉落表</span>'
-    var html = ''
-    for (var k = 0; k < ids.length; k++){
-      var table = codex.drops[String(ids[k])]
-      if (!table) continue
-      for (var y = 0; y < table.items.length; y++){
-        var item = table.items[y]
-        var named = codex.itemNames ? codex.itemNames[item[0]] : null
-        var label = itemPair(named, item[0])
-        html += '<span class="numChip">' + esc(label) + ' <b>' + esc(chanceText(item[3])) + '</b>'
-        if (item[1] !== item[2]) html += ' ×' + esc(item[1]) + '-' + esc(item[2])
-        html += '</span>'
-      }
-    }
-    return html
-  }
+  /**
+   * 掉落，**按地点对齐**。
+   *
+   * 掉落表本身是按地点区分的（同一只怪在不同地点可能是不同的表：骷髅骑士 36 个地点
+   * 对应 6 种组合），所以把掉落摊成一大坨会丢掉"在哪掉什么"。详情里每个地点一行、
+   * 右边就是该地点的掉落——玩家要回答的正是"去哪个点刷这样东西"。
+   * 具体拼装在 codexDetailHtml 里（它是唯一调用方）。
+   */
 
   function renderCodexTabs(){
     var host = el('codexTabs')
@@ -594,15 +601,29 @@ const JS = String.raw`
     html += '<div class="detailGrid">'
     html += '<div class="kv"><span class="kvKey">' + (isMonster ? '怪物' : '地点') + '</span><span class="kvVal">'
     html += esc(isMonster ? codexName(codex.monsters, id, id) : codexName(codex.stages, id, id))
-    html += ' <span class="tag">' + esc(entry.row.ja || '') + '</span></span></div>'
-    html += '<div class="kv"><span class="kvKey">生成点</span><span class="kvVal">'
-    var spots = entry.rows.slice().sort(function(a, b){ return a.min - b.min })
+    html += ' <span class="tag">' + esc(entry.row.ja || '') + '</span>'
+    html += '<span class="tag">' + String(entry.rows.length) + ' 个地点</span></span></div>'
+    html += '</div>'
+    /*
+     * 地点与掉落同一行、左右对齐：掉落表本来就是按地点分的，分开两栏会丢掉
+     * "这个点掉什么"。按等级排序，低级的点在前。
+     */
+    html += '<div class="dropTable">'
+    var spots = entry.rows.slice().sort(function(a, b){ return (a.min - b.min) || 0 })
     for (var j = 0; j < spots.length; j++){
-      var where = isMonster ? namePair(codex.stages, spots[j].s, spots[j].s) : codexName(codex.monsters, spots[j].m, spots[j].m)
-      html += '<span class="numChip">' + esc(where) + ' <b>' + esc(codexLevel(spots[j].min, spots[j].max)) + '</b></span>'
+      var spot = spots[j]
+      var where = isMonster ? namePair(codex.stages, spot.s, spot.s) : namePair(codex.monsters, spot.m, spot.m)
+      var tables = (spot.d || []).filter(function (tid){ return tid > 0 && codex.drops[String(tid)] })
+      html += '<div class="dropRow">'
+      html += '<span class="dropPlace">' + esc(where) + ' <span class="dropLv">' + esc(codexLevel(spot.min, spot.max)) + '</span></span>'
+      html += '<span class="dropItems">'
+      if (tables.length === 0){
+        html += '<span class="tag">无掉落表</span>'
+      } else {
+        for (var k = 0; k < tables.length; k++) html += dropChipsHtml(codex.drops[String(tables[k])], codex)
+      }
+      html += '</span></div>'
     }
-    html += '</span></div>'
-    html += '<div class="kv"><span class="kvKey">掉落</span><span class="kvVal">' + codexDrops(entry) + '</span></div>'
     html += '</div>'
     html += '<div class="foot" style="margin-top:8px"><div class="footRow"><span>数据来源</span><span>' + esc(codex.legend || '') + '</span></div></div>'
     html += '</div>'
