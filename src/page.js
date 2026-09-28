@@ -266,7 +266,57 @@ const JS = `
       if (spot.max > s.max) s.max = spot.max
       s.rows.push(spot)
     }
-    state.codexIndex = { byMonster: values(byMonster), byStage: values(byStage) }
+    /*
+     * 「按掉落物」视图：一个掉落物一行，右边是掉落它的怪物与地点。
+     *
+     * 掉落表是「一张表被多个生成点共用」的结构（骷髅骑士 36 个地点只对应 6 张表），
+     * 所以先建「掉落表 id -> 用到它的生成点」再反查，比逐个生成点展开快得多。
+     */
+    var usersByTable = {}
+    for (var c = 0; c < codex.spots.length; c++){
+      var sp = codex.spots[c]
+      if (!codex.monsters[sp.m] || !codex.stages[sp.s]) continue
+      var tableIds = sp.d || []
+      for (var e = 0; e < tableIds.length; e++){
+        if (!(tableIds[e] > 0)) continue
+        if (!usersByTable[tableIds[e]]) usersByTable[tableIds[e]] = []
+        usersByTable[tableIds[e]].push(sp)
+      }
+    }
+    var byItem = {}
+    for (var tid in codex.drops){
+      if (!Object.prototype.hasOwnProperty.call(codex.drops, tid)) continue
+      var table = codex.drops[tid]
+      var users = usersByTable[tid] || []
+      if (table.items.length === 0 || users.length === 0) continue
+      for (var f = 0; f < table.items.length; f++){
+        var item = table.items[f]
+        var iid = item[0]
+        if (!byItem[iid]){
+          byItem[iid] = { id: iid, row: codex.itemNames[iid] || {}, monsters: {}, stages: {},
+                          sources: {}, chances: [], sourceCount: 0 }
+        }
+        var entry = byItem[iid]
+        entry.chances.push(item[3])
+        for (var g = 0; g < users.length; g++){
+          var use = users[g]
+          /* 同一个物品可能经由两张表落到同一个生成点（雷斯塔尼亞 的 116+270），
+             这种情况只记一个出处，但掉率各记一遍。 */
+          entry.sources[use.m + ':' + use.s] = 1
+          entry.monsters[use.m] = 1
+          entry.stages[use.s] = 1
+        }
+      }
+    }
+    var itemList = []
+    for (var iidKey in byItem){
+      if (!Object.prototype.hasOwnProperty.call(byItem, iidKey)) continue
+      var rowItem = byItem[iidKey]
+      rowItem.sourceCount = keys(rowItem.sources).length
+      rowItem.itemText = [rowItem.row.zh || '', rowItem.row.ja || '', rowItem.row.en || ''].join(' ')
+      itemList.push(rowItem)
+    }
+    state.codexIndex = { byMonster: values(byMonster), byStage: values(byStage), byItem: itemList }
     return state.codexIndex
   }
 
@@ -317,7 +367,7 @@ const JS = `
     var index = codexIndex()
     var needle = codexFold(state.codexQuery.trim())
 
-    function matches(entries){
+    function matches(entries, itemsOnly){
       if (needle === '') return entries.slice()
       return entries.filter(function(entry){
         var row = entry.row
@@ -325,14 +375,21 @@ const JS = `
         if (row.zh && codexFold(row.zh).indexOf(needle) >= 0) return true
         if (row.ja && row.ja.toLowerCase().indexOf(needle) >= 0) return true
         if (row.en && row.en.toLowerCase().indexOf(needle) >= 0) return true
+        /* 掉落物也算命中：玩家常常是拿着一个素材找"去哪刷"。
+           但在「按掉落物」视图里条目本身就是物品，不该再拿 itemText 匹配。 */
+        if (!itemsOnly && entry.itemText && codexFold(entry.itemText).indexOf(needle) >= 0) return true
         return false
       })
     }
 
-    var rows = matches(state.codexView === 'stage' ? index.byStage : index.byMonster)
-    if (needle !== '' && rows.length === 0){
+    var isItemView = state.codexView === 'item'
+    var pool = isItemView ? index.byItem : (state.codexView === 'stage' ? index.byStage : index.byMonster)
+    var rows = matches(pool, isItemView)
+    /* 跨视图只在「按怪物 ↔ 按地点」之间做：「按掉落物」是独立入口，
+       而且只按物品名匹配，自动切过去或切出来都会让人莫名其妙。 */
+    if (!isItemView && needle !== '' && rows.length === 0){
       var otherView = state.codexView === 'stage' ? 'monster' : 'stage'
-      var otherHits = matches(otherView === 'stage' ? index.byStage : index.byMonster)
+      var otherHits = matches(otherView === 'stage' ? index.byStage : index.byMonster, false)
       if (otherHits.length > 0){
         state.codexView = otherView
         renderCodexTabs()
@@ -340,6 +397,16 @@ const JS = `
       }
     }
     var sort = state.codexSort
+    if (isItemView){
+      rows.sort(function (a, b){
+        var an = a.row.zh || a.row.ja || a.row.en || a.id
+        var bn = b.row.zh || b.row.ja || b.row.en || b.id
+        if (sort === 'name') return an.localeCompare(bn, 'zh')
+        if (sort === 'level') return String(a.id).localeCompare(String(b.id), 'zh')
+        return (b.sourceCount - a.sourceCount) || an.localeCompare(bn, 'zh')
+      })
+      return rows
+    }
     var dict = state.codexView === 'stage' ? codex.stages : codex.monsters
     rows.sort(function(a, b){
       if (sort === 'name') return codexName(dict, a.id, a.id).localeCompare(codexName(dict, b.id, b.id), 'zh')
@@ -358,17 +425,38 @@ const JS = `
     return chance <= 1.5 ? String(Math.round(chance * 1000) / 10) + '%' : String(chance) + '%'
   }
 
+  /** 掉落率区间文本：同一个物品在不同来源可能不同，取最小-最大。 */
+  function chanceRange(values){
+    var min = null
+    var max = null
+    for (var i = 0; i < values.length; i++){
+      var value = Number(values[i])
+      if (!isFinite(value) || value <= 0) continue
+      if (min === null || value < min) min = value
+      if (max === null || value > max) max = value
+    }
+    if (min === null) return '—'
+    return min === max ? chanceText(min) : chanceText(min) + '-' + chanceText(max)
+  }
+
   function renderCodexTabs(){
     var html = ''
-    var views = [['monster', '按怪物'], ['stage', '按地点']]
+    var views = [['monster', '按怪物'], ['stage', '按地点'], ['item', '按掉落物']]
     for (var i = 0; i < views.length; i++){
       html += '<div class="job' + (state.codexView === views[i][0] ? ' on' : '') + '" data-view="' + views[i][0] + '">' + views[i][1] + '</div>'
     }
-    var sorts = [['spots', '生成点'], ['level', '等级'], ['name', '名称']]
+    /* 排序项随视图变：「生成点」「等级」对物品没有意义 */
+    var sorts = state.codexView === 'item'
+      ? [['spots', '来源数'], ['name', '名称']]
+      : [['spots', '生成点'], ['level', '等级'], ['name', '名称']]
+    /* 切视图后当前排序可能已不存在（物品视图没有「等级」），归一化到有效值 */
+    var sortOk = false
+    for (var s = 0; s < sorts.length; s++) if (sorts[s][0] === state.codexSort) sortOk = true
+    if (!sortOk) state.codexSort = 'spots'
     for (var j = 0; j < sorts.length; j++){
       html += '<div class="job' + (state.codexSort === sorts[j][0] ? ' on' : '') + '" data-csort="' + sorts[j][0] + '">' + sorts[j][1] + '</div>'
     }
-    html += '<div class="job" style="cursor:default"><input id="codexSearch" placeholder="查怪物或地点（中/日/英文）" style="min-width:210px"></div>'
+    html += '<div class="job" style="cursor:default"><input id="codexSearch" placeholder="查怪物、地点或掉落物（中/日/英文）" style="min-width:210px"></div>'
     el('codexTabs').innerHTML = html
     var box = el('codexSearch')
     if (box) box.addEventListener('input', function(event){
@@ -377,12 +465,54 @@ const JS = `
     })
   }
 
+  /**
+   * 「按掉落物」视图：一个掉落物一行，右边是掉落它的怪物与地点。
+   *
+   * 不复用怪物/地点的行结构：那一套是「一个实体 + 它关联的实体」，而这里主体是
+   * 物品、关联有两类（怪物和地点），也没有等级概念。
+   */
+  function renderCodexItems(rows){
+    var codex = codexData()
+    var html = '<table class="wide"><thead><tr>'
+    html += '<th>掉落物</th><th>日文原名</th><th>掉落怪物</th><th>掉落地点</th>'
+    html += '<th class="num">来源</th><th class="num">掉落率</th>'
+    html += '</tr></thead><tbody>'
+    for (var i = 0; i < rows.length; i++){
+      var entry = rows[i]
+      var row = entry.row || {}
+      var mNames = []
+      var mIds = keys(entry.monsters)
+      for (var a = 0; a < mIds.length; a++) mNames.push(codexName(codex.monsters, mIds[a], mIds[a]))
+      var sNames = []
+      var sIds = keys(entry.stages)
+      for (var b = 0; b < sIds.length; b++) sNames.push(namePair(codex.stages, sIds[b], sIds[b]))
+      html += '<tr>'
+      html += '<td>' + esc(row.zh || row.ja || row.en || entry.id) + '</td>'
+      html += '<td>' + esc(row.ja || '') + '</td>'
+      html += '<td class="codexPlaces">' + esc(mNames.join('、')) + '</td>'
+      html += '<td class="codexPlaces">' + esc(sNames.join('、')) + '</td>'
+      html += '<td class="num">' + entry.sourceCount + '</td>'
+      html += '<td class="num">' + esc(chanceRange(entry.chances)) + '</td>'
+      html += '</tr>'
+    }
+    html += '</tbody></table>'
+    el('codexWrap').innerHTML = rows.length === 0 ? '<div class="empty">没有匹配的掉落物</div>' : html
+    var stats = codex.stats || {}
+    el('codexMeta').textContent = rows.length + ' 种掉落物　·　' + keys(codex.itemNames || {}).length +
+      ' 种物品　·　' + (stats.drops || 0) + ' 张掉落表　·　' + (stats.spots || 0) + ' 条生成记录　·　译名来自汉化包'
+  }
+
   function renderCodex(){
     var codex = codexData()
     if (!codex) return
     var panel = el('codexPanel')
     if (panel && panel.style) panel.style.display = ''
+    renderCodexTabs()
     var rows = codexRows()
+    if (state.codexView === 'item'){
+      renderCodexItems(rows)
+      return
+    }
     var isMonster = state.codexView !== 'stage'
     var html = '<table><thead><tr>'
     html += '<th>' + (isMonster ? '怪物' : '地点') + '</th>'
@@ -433,6 +563,8 @@ const JS = `
     if (!codex || !key) return ''
     var parts = key.split(':')
     var view = parts[0]
+    /* 物品视图没有可展开的详情，信息已经在行里给全了 */
+    if (view === 'item') return ''
     var id = parts.slice(1).join(':')
     var isMonster = view !== 'stage'
     var index = codexIndex()
