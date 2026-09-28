@@ -52,7 +52,46 @@ const NEWS = require(path.join(ROOT, 'src', 'news.js'))
  * 才是真正脆弱的地方。解析失败直接抛错——一份坏数据烘进页面，比构建失败更糟。
  */
 const MONSTERS_SOURCE = path.join(ROOT, 'src', 'monsters.js')
+const SERVERS_SOURCE = path.join(ROOT, 'src', 'servers', 'index.json')
+
+/**
+ * 图鉴数据：按服务器分开。
+ *
+ * 每个服务器的互动地图在自己脚本里声明了数据源（见 ddon-arc/build-servers-snapshot.py
+ * 的 SERVERS 表），所以生成点与掉落天然是「该服务器的」，不需要按内容猜归属。
+ *
+ * 名称字典（怪物/地点/物品）三个服务器共用：同一套游戏数据、同一套译名，按服各存
+ * 一份纯属浪费——整包 1270 KB 里字典只占 93 KB，其余是各服的生成点与掉落表。
+ */
+const SERVERS_FILE = fs.existsSync(SERVERS_SOURCE)
+  ? JSON.parse(fs.readFileSync(SERVERS_SOURCE, 'utf8'))
+  : null
+
 const CODEX = (() => {
+  if (SERVERS_FILE !== null) {
+    const shared = {
+      capturedAt: SERVERS_FILE.capturedAt,
+      charMap: SERVERS_FILE.charMap,
+      legend: SERVERS_FILE.legend,
+      monsters: SERVERS_FILE.monsters,
+      stages: SERVERS_FILE.stages,
+      itemNames: SERVERS_FILE.itemNames,
+    }
+    const servers = {}
+    for (const [key, value] of Object.entries(SERVERS_FILE.servers)) {
+      servers[key] = {
+        label: value.label,
+        declaredIn: value.declaredIn,
+        source: value.source,
+        spots: value.spots,
+        drops: value.drops,
+        stats: value.stats,
+      }
+    }
+    const first = Object.keys(servers)[0]
+    return { ...shared, servers, defaultServer: first, ...servers[first] }
+  }
+  /* 还没有多服务器数据时退回单份快照，保证老流程仍能构建 */
   const text = fs.readFileSync(MONSTERS_SOURCE, 'utf8')
   const marker = 'export const MONSTERS = '
   const start = text.indexOf(marker)
@@ -100,6 +139,10 @@ input{min-height:34px;padding:6px 10px}
 .dropPlace{font-weight:600;word-break:break-word}
 .dropLv{color:var(--dim);font-weight:400;font-size:11.5px;font-variant-numeric:tabular-nums}
 .dropItems{display:flex;flex-wrap:wrap;gap:5px}
+/* 服务器切换：三个服的数据分开取，切换时把数据源写清楚 */
+.codexServerLabel{color:var(--dim);font-size:12px;align-self:center}
+.codexServerSource{color:var(--dim);font-size:11.5px;align-self:center;word-break:break-word}
+#codexServers{border-bottom:1px solid var(--line);padding-bottom:7px}
 @media (max-width:720px){
   .dropRow{grid-template-columns:1fr;gap:3px}
 }
@@ -219,7 +262,8 @@ const JS = String.raw`
   var boot = JSON.parse(document.getElementById('boot').textContent)
   var KEY_NOTES = 'ddon-hub-notes-v1'
   var state = { job: boot.defaultJob, query: '', sort: 'dps', selected: null, hub: null, editing: null,
-    codexView: 'monster', codexSort: 'spots', codexQuery: '', codexOpen: null, codexIndex: null }
+    codexView: 'monster', codexSort: 'spots', codexQuery: '', codexOpen: null, codexIndex: null,
+    codexServer: null }
 
   function el(id){ return document.getElementById(id) }
   function esc(v){ return String(v === null || v === undefined ? '' : v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;') }
@@ -292,7 +336,67 @@ const JS = String.raw`
    * 2000 条生成记录正是让手机输入法看起来像坏了的原因。
    * 手机上用卡片、宽屏用表格，和技能表一样由 CSS 媒体查询切换。
    */
-  function codexData(){ return boot.codex || null }
+  /*
+   * 当前服务器的图鉴数据。
+   *
+   * 每个服务器的互动地图自己声明了数据源，所以生成点与掉落是「该服务器的」；
+   * 名称字典（怪物/地点/物品）三家共用一份，所以这里拼成同一形状给上层用。
+   * 切换服务器时只换 spots/drops/stats，字典不动。
+   */
+  function codexServers(){
+    return boot.codex && boot.codex.servers ? boot.codex.servers : null
+  }
+
+  function codexServerKey(){
+    var servers = codexServers()
+    if (!servers) return null
+    if (state.codexServer && servers[state.codexServer]) return state.codexServer
+    return boot.codex.defaultServer || codexKeys(servers)[0]
+  }
+
+  /*
+   * 生成点存成紧凑数组（[m, s, min, max, n, exp, [掉落表id...]]）——三套数据一起内联，
+   * 字段名重复上万次太浪费。这里解包回上层用的对象形状，其余代码一行都不用改。
+   *
+   * 解包结果按服务器缓存：codexData() 每次渲染都会被调用，而上万条的重复解包
+   * 会让切服务器明显卡顿（切服务器时清掉，见 onCodexClick）。
+   */
+  var unpacked = {}
+
+  function codexSpots(list, key){
+    if (key && unpacked[key] && unpacked[key].length === list.length) return unpacked[key]
+    var out = new Array(list.length)
+    for (var i = 0; i < list.length; i++){
+      var row = list[i]
+      out[i] = { m: row[0], s: row[1], min: row[2], max: row[3], n: row[4], exp: row[5], d: row[6] }
+    }
+    if (key) unpacked[key] = out
+    return out
+  }
+
+  function codexData(){
+    var codex = boot.codex
+    if (!codex) return null
+    var servers = codexServers()
+    if (!servers) return codex
+    var key = codexServerKey()
+    var pick = servers[key]
+    if (!pick) return codex
+    return {
+      capturedAt: codex.capturedAt,
+      charMap: codex.charMap,
+      legend: codex.legend,
+      monsters: codex.monsters,
+      stages: codex.stages,
+      itemNames: codex.itemNames,
+      label: pick.label,
+      declaredIn: pick.declaredIn,
+      source: pick.source,
+      spots: codexSpots(pick.spots, key),
+      drops: pick.drops,
+      stats: pick.stats,
+    }
+  }
 
   function codexName(dict, id, fallback){
     var row = dict ? dict[id] : null
@@ -582,9 +686,33 @@ const JS = String.raw`
    * 具体拼装在 codexDetailHtml 里（它是唯一调用方）。
    */
 
+  /**
+   * 服务器切换行。
+   *
+   * 三个服务器的互动地图各自声明了数据源，所以它们的内容是分开取的；这里让玩家
+   * 明确选择看哪一份，并把「数据源」写出来——否则同一个怪物在两个服掉的东西不同，
+   * 会以为是数据错了。
+   */
+  function renderCodexServers(){
+    var host = el('codexServers')
+    if (!host) return
+    var servers = codexServers()
+    if (!servers) { host.innerHTML = ''; return }
+    var current = codexServerKey()
+    var html = '<span class="codexServerLabel">服务器</span>'
+    for (var key in servers){
+      if (!Object.prototype.hasOwnProperty.call(servers, key)) continue
+      html += '<div class="job' + (key === current ? ' on' : '') + '" data-server="' + esc(key) + '">' +
+              esc(servers[key].label) + '</div>'
+    }
+    html += '<span class="codexServerSource">' + esc((servers[current] && servers[current].declaredIn) || '') + '</span>'
+    host.innerHTML = html
+  }
+
   function renderCodexTabs(){
     var host = el('codexTabs')
     if (!host) return
+    renderCodexServers()
     var views = [['monster', '按怪物'], ['stage', '按地点'], ['item', '按掉落物']]
     /* 排序项随视图变：「生成点」「等级」对物品没有意义，物品按「来源数 / 名称」排。 */
     var sorts = state.codexView === 'item'
@@ -811,6 +939,18 @@ const JS = String.raw`
       renderCodex()
       return
     }
+    /* 切服务器：生成点/掉落表整套换掉，索引必须重建（缓存的 id 只对上一个服有效） */
+    var serverNode = target.closest('[data-server]')
+    if (serverNode){
+      var nextServer = serverNode.getAttribute('data-server')
+      if (nextServer !== state.codexServer){
+        state.codexServer = nextServer
+        state.codexIndex = null
+        state.codexOpen = null
+      }
+      renderCodex()
+      return
+    }
     var sortNode = target.closest('[data-csort]')
     if (sortNode){
       state.codexSort = sortNode.getAttribute('data-csort')
@@ -902,6 +1042,9 @@ const JS = String.raw`
     if (wide) wide.addEventListener('click', onCodexClick)
     var tabs = el('codexTabs')
     if (tabs) tabs.addEventListener('click', onCodexClick)
+    /* 服务器切换是独立一行（#codexServers），不绑就点不动 */
+    var servers = el('codexServers')
+    if (servers) servers.addEventListener('click', onCodexClick)
   }
 
   function renderJobs(){
@@ -1643,6 +1786,7 @@ ${ASSETS.favicon === null || hosted ? '' : `<link rel="apple-touch-icon" href="$
   <div class="grid" id="live"></div>
 
   <h2>怪物图鉴 · 出现地点与等级</h2>
+  <div class="jobs" id="codexServers"></div>
   <input id="codexSearch" placeholder="查怪物或地点（中/日/英文，或 0x… 编号）">
   <div class="jobs" id="codexTabs"></div>
   <div class="toolbar"><span class="tag" id="codexMeta"></span></div>
