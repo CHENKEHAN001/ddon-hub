@@ -106,6 +106,9 @@ h2{margin:22px 0 8px;font-size:14px;font-weight:600;color:var(--dim)}
 .job.on{background:var(--panel2);border-color:var(--dim);font-weight:600}
 .toolbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px}
 .tableWrap{border:1px solid var(--line);border-radius:12px;overflow:auto;max-height:64vh}
+/* 怪物图鉴的「出现地点 / 出现怪物」列：这些就是图鉴要回答的答案，所以让它换行
+   显示而不是被截断；同时限宽，免得某只怪物带二十个地点时把等级列顶出屏幕。 */
+.codexPlaces{max-width:38ch;white-space:normal;line-height:1.5}
 table{border-collapse:separate;border-spacing:0;width:100%;font-size:12.5px}
 th{position:sticky;top:0;z-index:1;background:var(--panel);border-bottom:1px solid var(--line);padding:7px 9px;text-align:left;font-weight:600;white-space:nowrap;color:var(--dim)}
 th.sortable{cursor:pointer;user-select:none}
@@ -147,7 +150,13 @@ const JS = `
     query: '',
     sort: 'dps',
     selected: null,
-    pendingBusy: false
+    pendingBusy: false,
+    /* 怪物图鉴：视图(按怪物/按地点)、排序、搜索词、展开行，以及一次性建好的索引 */
+    codexView: 'monster',
+    codexSort: 'spots',
+    codexQuery: '',
+    codexOpen: null,
+    codexIndex: null
   }
 
   function el(id){ return document.getElementById(id) }
@@ -187,6 +196,242 @@ const JS = `
   }
 
   /* ------------------------------------------------------------------ rendering */
+
+  /* ------------------------------------------------------------------ 怪物图鉴 */
+  /*
+   * Same data as the DSH panel's codex, same two directions: pick a monster and
+   * see its locations, or pick a location and see what lives there. The index is
+   * built once because filtering 2000 spawn rows on every keystroke is what makes
+   * a phone keyboard feel broken.
+   */
+
+  function codexData(){ return boot.codex || null }
+
+  function codexName(dict, id, fallback){
+    var row = dict ? dict[id] : null
+    if (!row) return fallback === undefined ? '' : fallback
+    return row.zh || row.ja || row.en || (fallback === undefined ? '' : fallback)
+  }
+
+  function codexIndex(){
+    if (state.codexIndex !== null) return state.codexIndex
+    var codex = codexData()
+    var byMonster = {}, byStage = {}
+    if (!codex) return { byMonster: [], byStage: [] }
+    for (var i = 0; i < codex.spots.length; i++){
+      var spot = codex.spots[i]
+      var monster = codex.monsters[spot.m]
+      var stage = codex.stages[spot.s]
+      if (!monster || !stage) continue
+      var m = byMonster[spot.m]
+      if (!m){ m = { id: spot.m, row: monster, places: {}, n: 0, min: spot.min, max: spot.max, rows: [] }; byMonster[spot.m] = m }
+      m.n += spot.n
+      m.places[spot.s] = 1
+      if (spot.min < m.min) m.min = spot.min
+      if (spot.max > m.max) m.max = spot.max
+      m.rows.push(spot)
+      var s = byStage[spot.s]
+      if (!s){ s = { id: spot.s, row: stage, kinds: {}, n: 0, min: spot.min, max: spot.max, rows: [] }; byStage[spot.s] = s }
+      s.n += spot.n
+      s.kinds[spot.m] = 1
+      if (spot.min < s.min) s.min = spot.min
+      if (spot.max > s.max) s.max = spot.max
+      s.rows.push(spot)
+    }
+    state.codexIndex = { byMonster: values(byMonster), byStage: values(byStage) }
+    return state.codexIndex
+  }
+
+  function values(map){
+    var out = []
+    for (var key in map) if (Object.prototype.hasOwnProperty.call(map, key)) out.push(map[key])
+    return out
+  }
+
+  function keys(map){
+    var out = []
+    for (var key in map) if (Object.prototype.hasOwnProperty.call(map, key)) out.push(key)
+    return out
+  }
+
+  function levelText(min, max){ return min === max ? 'Lv' + min : 'Lv' + min + '-' + max }
+
+  function codexRows(){
+    var codex = codexData()
+    var index = codexIndex()
+    var source = state.codexView === 'stage' ? index.byStage : index.byMonster
+    var needle = state.codexQuery.trim().toLowerCase()
+    var rows = []
+    for (var i = 0; i < source.length; i++){
+      var entry = source[i]
+      if (needle !== ''){
+        var row = entry.row
+        var hit = entry.id.toLowerCase().indexOf(needle) >= 0
+        if (!hit && row.zh && row.zh.toLowerCase().indexOf(needle) >= 0) hit = true
+        if (!hit && row.ja && row.ja.toLowerCase().indexOf(needle) >= 0) hit = true
+        if (!hit && row.en && row.en.toLowerCase().indexOf(needle) >= 0) hit = true
+        if (!hit) continue
+      }
+      rows.push(entry)
+    }
+    var sort = state.codexSort
+    var dict = state.codexView === 'stage' ? codex.stages : codex.monsters
+    rows.sort(function(a, b){
+      if (sort === 'name') return codexName(dict, a.id, a.id).localeCompare(codexName(dict, b.id, b.id), 'zh')
+      if (sort === 'level') return (b.max - a.max) || (a.min - b.min)
+      return (b.n - a.n) || 0
+    })
+    return rows
+  }
+
+  function renderCodexTabs(){
+    var html = ''
+    var views = [['monster', '按怪物'], ['stage', '按地点']]
+    for (var i = 0; i < views.length; i++){
+      html += '<div class="job' + (state.codexView === views[i][0] ? ' on' : '') + '" data-view="' + views[i][0] + '">' + views[i][1] + '</div>'
+    }
+    var sorts = [['spots', '生成点'], ['level', '等级'], ['name', '名称']]
+    for (var j = 0; j < sorts.length; j++){
+      html += '<div class="job' + (state.codexSort === sorts[j][0] ? ' on' : '') + '" data-csort="' + sorts[j][0] + '">' + sorts[j][1] + '</div>'
+    }
+    html += '<div class="job" style="cursor:default"><input id="codexSearch" placeholder="查怪物或地点（中/日/英文）" style="min-width:210px"></div>'
+    el('codexTabs').innerHTML = html
+    var box = el('codexSearch')
+    if (box) box.addEventListener('input', function(event){
+      state.codexQuery = event.target.value
+      renderCodex()
+    })
+  }
+
+  function renderCodex(){
+    var codex = codexData()
+    if (!codex) return
+    var panel = el('codexPanel')
+    if (panel && panel.style) panel.style.display = ''
+    var rows = codexRows()
+    var isMonster = state.codexView !== 'stage'
+    var html = '<table><thead><tr>'
+    html += '<th>' + (isMonster ? '怪物' : '地点') + '</th>'
+    html += '<th>日文原名</th>'
+    html += '<th>' + (isMonster ? '出现地点' : '出现怪物') + '</th>'
+    html += '<th>等级</th><th>' + (isMonster ? '地点数' : '怪物数') + '</th><th>生成点</th>'
+    html += '</tr></thead><tbody>'
+    for (var i = 0; i < rows.length; i++){
+      var entry = rows[i]
+      var label = isMonster ? codexName(codex.monsters, entry.id, entry.id) : codexName(codex.stages, entry.id, entry.id)
+      var other = []
+      var ids = isMonster ? keys(entry.places) : keys(entry.kinds)
+      for (var k = 0; k < ids.length; k++){
+        other.push(isMonster ? codexName(codex.stages, ids[k], ids[k]) : codexName(codex.monsters, ids[k], ids[k]))
+      }
+      var open = state.codexOpen === (state.codexView + ':' + entry.id)
+      html += '<tr class="' + (open ? 'on' : '') + '" data-codex="' + esc(state.codexView + ':' + entry.id) + '">'
+      html += '<td class="name">' + esc(label) + '</td>'
+      html += '<td>' + esc(entry.row.ja || '') + '</td>'
+      html += '<td class="codexPlaces">' + esc(other.join('、')) + '</td>'
+      html += '<td class="num">' + esc(levelText(entry.min, entry.max)) + '</td>'
+      html += '<td class="num">' + String(ids.length) + '</td>'
+      html += '<td class="num">' + String(entry.n) + '</td>'
+      html += '</tr>'
+    }
+    html += '</tbody></table>'
+    el('codexWrap').innerHTML = rows.length === 0 ? '<div class="empty">没有匹配的怪物或地点</div>' : html
+    var stats = codex.stats || {}
+    var monsters = codex.monsters || {}
+    var stages = codex.stages || {}
+    el('codexMeta').textContent = rows.length + ' 行　·　' + (stats.monsters || 0) + ' 种怪物　·　' + (stats.locations || 0) + ' 个地点　·　' + (stats.spots || 0) + ' 条生成记录　·　译名来自汉化包'
+    if (state.codexOpen !== null) renderCodexDetail()
+    else el('codexDetail').innerHTML = ''
+  }
+
+  function renderCodexDetail(){
+    var codex = codexData()
+    if (!codex || state.codexOpen === null){ el('codexDetail').innerHTML = ''; return }
+    var parts = state.codexOpen.split(':')
+    var view = parts[0]
+    var id = parts.slice(1).join(':')
+    var isMonster = view !== 'stage'
+    var index = codexIndex()
+    var entry = null
+    var list = isMonster ? index.byMonster : index.byStage
+    for (var i = 0; i < list.length; i++) if (list[i].id === id){ entry = list[i]; break }
+    if (entry === null){ el('codexDetail').innerHTML = ''; return }
+
+    var html = '<div class="detail"><div class="detailGrid"><div class="kv"><span class="kvKey">' + (isMonster ? '怪物' : '地点') + '</span><span class="kvVal">'
+    html += esc(isMonster ? codexName(codex.monsters, id, id) : codexName(codex.stages, id, id))
+    html += '　<span class="tag">' + esc(entry.row.ja || '') + '</span></span></div>'
+    html += '<div class="kv"><span class="kvKey">生成点</span><span class="kvVal"><span class="numChip">共 <b>' + String(entry.n) + '</b> 个</span>'
+    var spots = entry.rows.slice().sort(function(a, b){ return a.min - b.min })
+    for (var j = 0; j < spots.length; j++){
+      var spot = spots[j]
+      var where = isMonster ? codexName(codex.stages, spot.s, spot.s) : codexName(codex.monsters, spot.m, spot.m)
+      html += '<span class="numChip">' + esc(where) + ' <b>' + esc(levelText(spot.min, spot.max)) + '</b></span>'
+    }
+    html += '</span></div>'
+    var tableIds = []
+    for (var t = 0; t < entry.rows.length; t++){
+      var drops = entry.rows[t].d || []
+      for (var d = 0; d < drops.length; d++) if (tableIds.indexOf(drops[d]) < 0) tableIds.push(drops[d])
+    }
+    html += '<div class="kv"><span class="kvKey">掉落</span><span class="kvVal">'
+    if (tableIds.length === 0) html += '<span class="tag">该生成点没有掉落表</span>'
+    for (var x = 0; x < tableIds.length; x++){
+      var table = codex.drops[String(tableIds[x])]
+      if (!table) continue
+      for (var y = 0; y < table.items.length; y++){
+        var item = table.items[y]
+        var named = codex.itemNames ? codex.itemNames[item[0]] : null
+        var itemLabel = named ? (named.zh || named.ja || named.en || item[0]) : item[0]
+        html += '<span class="numChip">' + esc(itemLabel) + ' <b>' + esc(item[3]) + '%</b>'
+        if (item[1] !== item[2]) html += ' ×' + esc(item[1]) + '-' + esc(item[2])
+        html += '</span>'
+      }
+    }
+    html += '</span></div></div>'
+    html += '<div class="tag" style="margin-top:8px">' + esc(codex.legend || '') + '</div>'
+    html += '</div>'
+    el('codexDetail').innerHTML = html
+  }
+
+  function mountCodex(){
+    var codex = codexData()
+    if (!codex) return
+    if (!state.codexView) state.codexView = 'monster'
+    if (!state.codexSort) state.codexSort = 'spots'
+    renderCodexTabs()
+    renderCodex()
+  }
+
+  /* 图鉴的点击：切视图 / 切排序 / 展开一行。挂在面板上做委托，避免和技能表
+     的行点击抢事件——两者都在 tbody 里，各自的面板互不重叠。 */
+  function onCodexClick(event){
+    var target = event.target
+    if (!target || !target.closest) return
+    var viewNode = target.closest('[data-view]')
+    if (viewNode){
+      state.codexView = viewNode.getAttribute('data-view')
+      state.codexOpen = null
+      renderCodexTabs(); renderCodex()
+      return
+    }
+    var sortNode = target.closest('[data-csort]')
+    if (sortNode){
+      state.codexSort = sortNode.getAttribute('data-csort')
+      renderCodexTabs(); renderCodex()
+      return
+    }
+    var rowNode = target.closest('tbody tr')
+    if (rowNode){
+      var key = rowNode.getAttribute('data-codex')
+      if (key === null) return
+      state.codexOpen = state.codexOpen === key ? null : key
+      renderCodex()
+      if (state.codexOpen !== null){
+        var node = el('codexDetail')
+        if (node && node.scrollIntoView) node.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+      }
+    }
+  }
 
   function renderJobs(){
     var list = jobList()
@@ -565,6 +810,8 @@ const JS = `
 
   renderJobs()
   renderTable()
+  mountCodex()
+  if (boot.codex) el('codexPanel').addEventListener('click', onCodexClick)
   refresh(false)
   setInterval(function(){ refresh(false) }, 30000)
 })()
@@ -588,6 +835,16 @@ function renderPage(options) {
     builtAt: manifest.builtAt,
     capturedAt: manifest.capturedAt,
   }
+  /*
+   * The monster codex rides inside the same `boot` payload as the job tree.
+   * It has to be in the page rather than fetched: this build is a single file
+   * meant to work offline, and its data is what makes the codex usable on a
+   * phone with no connection. A build that was handed no codex (an older
+   * caller) still renders — the panel is simply left out, because an empty
+   * codex section would read as "no monsters exist" instead of "not included".
+   */
+  const codex = options.codex && options.codex.monsters ? options.codex : null
+  if (codex !== null) boot.codex = codex
   const lan = options.lan === true
   return `<!doctype html>
 <html lang="zh-CN">
@@ -617,6 +874,14 @@ ${ASSETS.favicon === null ? '' : `<link rel="icon" type="image/png" href="${ASSE
 
   <h2>官方公告</h2>
   <div class="grid" id="news"></div>
+
+  <h2>怪物图鉴 · 出现地点与等级</h2>
+  <div id="codexPanel" style="display:none">
+    <div class="jobs" id="codexTabs"></div>
+    <div class="toolbar"><span class="tag" id="codexMeta"></span><span class="spacer"></span><span class="tag">点行展开该怪物/地点的全部生成点与掉落表</span></div>
+    <div class="tableWrap" id="codexWrap"></div>
+    <div id="codexDetail"></div>
+  </div>
 
   <h2>职业技能数据</h2>
   <div class="jobs" id="jobs"></div>

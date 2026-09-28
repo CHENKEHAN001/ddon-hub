@@ -40,6 +40,32 @@ const { LINKS } = require(path.join(ROOT, 'src', 'upstream.js'))
    拿到同样的条目，四个形态的公告区块才不会一个有一个没有。 */
 const NEWS = require(path.join(ROOT, 'src', 'news.js'))
 
+/**
+ * 怪物图鉴快照。
+ *
+ * `src/monsters.js` 是生成物（ddon-arc/build-monsters-module.py 产出），写成 ESM
+ * 是为了让插件半边 `import`；这个构建脚本是 CommonJS，所以按文本取那一个 JSON
+ * 字面量再解析，而不是 require 它。
+ *
+ * 之所以不用正则「配平括号」而是走 JSON.parse：`export const MONSTERS = ` 后面就是
+ * 一个完整的 JSON 值，取到末尾分号即可。JSON.parse 自己会把括号配平，正则做这件事
+ * 才是真正脆弱的地方。解析失败直接抛错——一份坏数据烘进页面，比构建失败更糟。
+ */
+const MONSTERS_SOURCE = path.join(ROOT, 'src', 'monsters.js')
+const CODEX = (() => {
+  const text = fs.readFileSync(MONSTERS_SOURCE, 'utf8')
+  const marker = 'export const MONSTERS = '
+  const start = text.indexOf(marker)
+  if (start < 0) throw new Error(`monsters.js: 找不到 "${marker}"`)
+  const from = start + marker.length
+  const end = text.lastIndexOf(';')
+  if (end < from) throw new Error('monsters.js: 找不到导出行末尾的分号')
+  return JSON.parse(text.slice(from, end))
+})()
+if (CODEX.monsters === undefined || CODEX.spots === undefined) {
+  throw new Error('monsters.js: 快照里没有 monsters/spots，生成器是不是改了结构？')
+}
+
 /* --------------------------------------------------------------------- styles */
 
 /** Narrow-screen overrides: touch targets, one column, no hover-only affordances. */
@@ -57,6 +83,10 @@ h1{font-size:15px}
 button{padding:7px 12px;min-height:34px}
 input{min-height:34px;padding:6px 10px}
 #search{width:100%!important;box-sizing:border-box;margin-top:6px}
+/* 怪物图鉴：和技能表同一套卡片，手机上单列、宽屏切表格 */
+#codexSearch{width:100%!important;box-sizing:border-box;margin:6px 0}
+.codexCard{margin-bottom:7px}
+.codexPlaces{max-width:38ch;white-space:normal;line-height:1.5}
 .jobs{gap:6px;margin:8px 0}
 .job{padding:6px 13px;font-size:13.5px;min-height:32px;display:inline-flex;align-items:center}
 .toolbar{gap:6px}
@@ -124,10 +154,12 @@ a.chip:hover{border-color:var(--dim);color:var(--fg)}
 @media (min-width:900px){
   .wrap{max-width:1500px;padding:14px 20px 60px}
   #skills{display:none}
+  #codexList{display:none}
   .wideWrap{display:block}
   .jobs{gap:5px;margin:6px 0 10px}
   .job{padding:3px 12px;min-height:26px;font-size:12.5px}
   #search{width:240px!important;margin-top:0}
+  #codexSearch{width:340px!important;margin:6px 0}
   .toolbar{margin-bottom:8px}
   table.wide{border-collapse:separate;border-spacing:0;width:100%;font-size:12.5px}
   table.wide thead th{position:sticky;top:0;z-index:1;background:var(--panel);border-bottom:1px solid var(--line);padding:8px 10px;text-align:left;font-weight:600;white-space:nowrap;color:var(--dim)}
@@ -170,7 +202,8 @@ const JS = String.raw`
   'use strict'
   var boot = JSON.parse(document.getElementById('boot').textContent)
   var KEY_NOTES = 'ddon-hub-notes-v1'
-  var state = { job: boot.defaultJob, query: '', sort: 'dps', selected: null, hub: null, editing: null }
+  var state = { job: boot.defaultJob, query: '', sort: 'dps', selected: null, hub: null, editing: null,
+    codexView: 'monster', codexSort: 'spots', codexQuery: '', codexOpen: null, codexIndex: null }
 
   function el(id){ return document.getElementById(id) }
   function esc(v){ return String(v === null || v === undefined ? '' : v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;') }
@@ -236,6 +269,268 @@ const JS = String.raw`
   }
 
   /* ------------------------------------------------------------ 渲染 */
+
+  /* ---- 怪物图鉴 ----
+   * 和插件面板同一份数据、同一个问题：一只怪物出现在哪些地点、多少级；
+   * 反过来的「这个地点有什么」也走同一张表。索引只建一次，因为每次按键都扫
+   * 2000 条生成记录正是让手机输入法看起来像坏了的原因。
+   * 手机上用卡片、宽屏用表格，和技能表一样由 CSS 媒体查询切换。
+   */
+  function codexData(){ return boot.codex || null }
+
+  function codexName(dict, id, fallback){
+    var row = dict ? dict[id] : null
+    if (!row) return fallback === undefined ? '' : fallback
+    return row.zh || row.ja || row.en || (fallback === undefined ? '' : fallback)
+  }
+
+  function codexKeys(map){
+    var out = []
+    for (var key in map) if (Object.prototype.hasOwnProperty.call(map, key)) out.push(key)
+    return out
+  }
+
+  function codexIndex(){
+    if (state.codexIndex) return state.codexIndex
+    var codex = codexData()
+    var byMonster = {}, byStage = {}
+    if (codex){
+      for (var i = 0; i < codex.spots.length; i++){
+        var spot = codex.spots[i]
+        var monster = codex.monsters[spot.m]
+        var stage = codex.stages[spot.s]
+        if (!monster || !stage) continue
+        var m = byMonster[spot.m]
+        if (!m){ m = { id: spot.m, row: monster, places: {}, n: 0, min: spot.min, max: spot.max, rows: [] }; byMonster[spot.m] = m }
+        m.n += spot.n
+        m.places[spot.s] = 1
+        if (spot.min < m.min) m.min = spot.min
+        if (spot.max > m.max) m.max = spot.max
+        m.rows.push(spot)
+        var s = byStage[spot.s]
+        if (!s){ s = { id: spot.s, row: stage, kinds: {}, n: 0, min: spot.min, max: spot.max, rows: [] }; byStage[spot.s] = s }
+        s.n += spot.n
+        s.kinds[spot.m] = 1
+        if (spot.min < s.min) s.min = spot.min
+        if (spot.max > s.max) s.max = spot.max
+        s.rows.push(spot)
+      }
+    }
+    var out = { byMonster: [], byStage: [] }
+    for (var key in byMonster) if (Object.prototype.hasOwnProperty.call(byMonster, key)) out.byMonster.push(byMonster[key])
+    for (var key2 in byStage) if (Object.prototype.hasOwnProperty.call(byStage, key2)) out.byStage.push(byStage[key2])
+    state.codexIndex = out
+    return out
+  }
+
+  function codexLevel(min, max){ return min === max ? 'Lv' + min : 'Lv' + min + '-' + max }
+
+  /** 当前视图下、按搜索词过滤、按当前排序键排好的条目。两种布局共用。 */
+  function codexRows(){
+    var codex = codexData()
+    if (!codex) return []
+    var index = codexIndex()
+    var source = state.codexView === 'stage' ? index.byStage : index.byMonster
+    var needle = state.codexQuery.trim().toLowerCase()
+    var rows = []
+    for (var i = 0; i < source.length; i++){
+      var entry = source[i]
+      if (needle !== ''){
+        var row = entry.row
+        var hit = entry.id.toLowerCase().indexOf(needle) >= 0
+        if (!hit && row.zh) hit = row.zh.toLowerCase().indexOf(needle) >= 0
+        if (!hit && row.ja) hit = row.ja.toLowerCase().indexOf(needle) >= 0
+        if (!hit && row.en) hit = row.en.toLowerCase().indexOf(needle) >= 0
+        if (!hit) continue
+      }
+      rows.push(entry)
+    }
+    var dict = state.codexView === 'stage' ? codex.stages : codex.monsters
+    var sort = state.codexSort
+    rows.sort(function(a, b){
+      if (sort === 'name') return codexName(dict, a.id, a.id).localeCompare(codexName(dict, b.id, b.id), 'zh')
+      if (sort === 'level') return (b.max - a.max) || (a.min - b.min)
+      return (b.n - a.n) || 0
+    })
+    return rows
+  }
+
+  /** 一只怪物（或一个地点）身上的全部掉落，去重后按掉落表原顺序列出。 */
+  function codexDrops(entry){
+    var codex = codexData()
+    var ids = []
+    for (var i = 0; i < entry.rows.length; i++){
+      var list = entry.rows[i].d || []
+      for (var j = 0; j < list.length; j++) if (ids.indexOf(list[j]) < 0) ids.push(list[j])
+    }
+    if (ids.length === 0) return '<span class="tag">该生成点没有掉落表</span>'
+    var html = ''
+    for (var k = 0; k < ids.length; k++){
+      var table = codex.drops[String(ids[k])]
+      if (!table) continue
+      for (var y = 0; y < table.items.length; y++){
+        var item = table.items[y]
+        var named = codex.itemNames ? codex.itemNames[item[0]] : null
+        var label = named ? (named.zh || named.ja || named.en || item[0]) : item[0]
+        html += '<span class="numChip">' + esc(label) + ' <b>' + esc(item[3]) + '%</b>'
+        if (item[1] !== item[2]) html += ' ×' + esc(item[1]) + '-' + esc(item[2])
+        html += '</span>'
+      }
+    }
+    return html
+  }
+
+  function renderCodexTabs(){
+    var host = el('codexTabs')
+    if (!host) return
+    var views = [['monster', '按怪物'], ['stage', '按地点']]
+    var sorts = [['spots', '生成点'], ['level', '等级'], ['name', '名称']]
+    var html = ''
+    for (var i = 0; i < views.length; i++){
+      html += '<div class="job' + (state.codexView === views[i][0] ? ' on' : '') + '" data-view="' + views[i][0] + '">' + views[i][1] + '</div>'
+    }
+    for (var j = 0; j < sorts.length; j++){
+      html += '<div class="job' + (state.codexSort === sorts[j][0] ? ' on' : '') + '" data-csort="' + sorts[j][0] + '">' + sorts[j][1] + '</div>'
+    }
+    host.innerHTML = html
+  }
+
+  function renderCodex(){
+    if (!codexData()) return
+    renderCodexTabs()
+    var codex = codexData()
+    var rows = codexRows()
+    var isMonster = state.codexView !== 'stage'
+    var html = ''
+    for (var i = 0; i < rows.length; i++){
+      var entry = rows[i]
+      var label = isMonster ? codexName(codex.monsters, entry.id, entry.id) : codexName(codex.stages, entry.id, entry.id)
+      var ids = isMonster ? codexKeys(entry.places) : codexKeys(entry.kinds)
+      var others = []
+      for (var k = 0; k < ids.length; k++){
+        others.push(isMonster ? codexName(codex.stages, ids[k], ids[k]) : codexName(codex.monsters, ids[k], ids[k]))
+      }
+      var open = state.codexOpen === (state.codexView + ':' + entry.id)
+      html += '<div class="skill codexCard' + (open ? ' on' : '') + '" data-codex="' + esc(state.codexView + ':' + entry.id) + '">'
+      html += '<div class="skillName">' + esc(label) + '<span class="ja">' + esc(entry.row.ja || '') + '</span></div>'
+      html += '<div class="skillNums">'
+      html += '<span class="numChip">等级 <b>' + esc(codexLevel(entry.min, entry.max)) + '</b></span>'
+      html += '<span class="numChip">' + (isMonster ? '地点' : '怪物') + ' <b>' + ids.length + '</b></span>'
+      html += '<span class="numChip">生成点 <b>' + entry.n + '</b></span>'
+      html += '</div>'
+      html += '<div class="skillNote">' + (isMonster ? '出现地点：' : '出现怪物：') + esc(others.join('、')) + '</div>'
+      html += '</div>'
+    }
+    el('codexList').innerHTML = rows.length === 0 ? '<div class="empty">没有匹配的怪物或地点</div>' : html
+
+    var host = el('codexTable')
+    if (host){
+      var table = '<table class="wide"><thead><tr>'
+      table += '<th>' + (isMonster ? '怪物' : '地点') + '</th><th>日文原名</th>'
+      table += '<th>' + (isMonster ? '出现地点' : '出现怪物') + '</th>'
+      table += '<th class="num">等级</th><th class="num">' + (isMonster ? '地点数' : '怪物数') + '</th><th class="num">生成点</th>'
+      table += '</tr></thead><tbody>'
+      for (var t = 0; t < rows.length; t++){
+        var item = rows[t]
+        var name = isMonster ? codexName(codex.monsters, item.id, item.id) : codexName(codex.stages, item.id, item.id)
+        var refs = isMonster ? codexKeys(item.places) : codexKeys(item.kinds)
+        var refNames = []
+        for (var r = 0; r < refs.length; r++){
+          refNames.push(isMonster ? codexName(codex.stages, refs[r], refs[r]) : codexName(codex.monsters, refs[r], refs[r]))
+        }
+        var isOpen = state.codexOpen === (state.codexView + ':' + item.id)
+        table += '<tr class="' + (isOpen ? 'on' : '') + '" data-codex="' + esc(state.codexView + ':' + item.id) + '">'
+        table += '<td>' + esc(name) + '</td><td>' + esc(item.row.ja || '') + '</td>'
+        table += '<td class="codexPlaces">' + esc(refNames.join('、')) + '</td>'
+        table += '<td class="num">' + esc(codexLevel(item.min, item.max)) + '</td>'
+        table += '<td class="num">' + refs.length + '</td><td class="num">' + item.n + '</td>'
+        table += '</tr>'
+      }
+      table += '</tbody></table>'
+      host.innerHTML = rows.length === 0 ? '' : table
+    }
+
+    var stats = codex.stats || {}
+    if (el('codexMeta')) el('codexMeta').textContent = rows.length + ' 行 · ' + (stats.monsters || 0) + ' 种怪物 · ' + (stats.locations || 0) + ' 个地点 · ' + (stats.spots || 0) + ' 条生成记录 · 译名来自汉化包'
+
+    if (state.codexOpen !== null) renderCodexDetail()
+    else if (el('codexDetail')) el('codexDetail').innerHTML = ''
+  }
+
+  function renderCodexDetail(){
+    if (!codexData() || state.codexOpen === null){ if (el('codexDetail')) el('codexDetail').innerHTML = ''; return }
+    var codex = codexData()
+    var parts = state.codexOpen.split(':')
+    var isMonster = parts[0] !== 'stage'
+    var id = parts.slice(1).join(':')
+    var index = codexIndex()
+    var list = isMonster ? index.byMonster : index.byStage
+    var entry = null
+    for (var i = 0; i < list.length; i++) if (list[i].id === id){ entry = list[i]; break }
+    if (entry === null){ el('codexDetail').innerHTML = ''; return }
+
+    var html = '<div class="detail">'
+    html += '<div class="detailGrid">'
+    html += '<div class="kv"><span class="kvKey">' + (isMonster ? '怪物' : '地点') + '</span><span class="kvVal">'
+    html += esc(isMonster ? codexName(codex.monsters, id, id) : codexName(codex.stages, id, id))
+    html += ' <span class="tag">' + esc(entry.row.ja || '') + '</span></span></div>'
+    html += '<div class="kv"><span class="kvKey">生成点</span><span class="kvVal">'
+    var spots = entry.rows.slice().sort(function(a, b){ return a.min - b.min })
+    for (var j = 0; j < spots.length; j++){
+      var where = isMonster ? codexName(codex.stages, spots[j].s, spots[j].s) : codexName(codex.monsters, spots[j].m, spots[j].m)
+      html += '<span class="numChip">' + esc(where) + ' <b>' + esc(codexLevel(spots[j].min, spots[j].max)) + '</b></span>'
+    }
+    html += '</span></div>'
+    html += '<div class="kv"><span class="kvKey">掉落</span><span class="kvVal">' + codexDrops(entry) + '</span></div>'
+    html += '</div>'
+    html += '<div class="foot" style="margin-top:8px"><div class="footRow"><span>数据来源</span><span>' + esc(codex.legend || '') + '</span></div></div>'
+    html += '</div>'
+    el('codexDetail').innerHTML = html
+  }
+
+  function onCodexClick(event){
+    var target = event.target
+    if (!target || !target.closest) return
+    var viewNode = target.closest('[data-view]')
+    if (viewNode){
+      state.codexView = viewNode.getAttribute('data-view')
+      state.codexOpen = null
+      renderCodex()
+      return
+    }
+    var sortNode = target.closest('[data-csort]')
+    if (sortNode){
+      state.codexSort = sortNode.getAttribute('data-csort')
+      renderCodex()
+      return
+    }
+    var rowNode = target.closest('[data-codex]')
+    if (rowNode){
+      var key = rowNode.getAttribute('data-codex')
+      state.codexOpen = state.codexOpen === key ? null : key
+      renderCodex()
+      if (state.codexOpen !== null){
+        var node = el('codexDetail')
+        if (node && node.scrollIntoView) node.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+      }
+    }
+  }
+
+  function mountCodex(){
+    if (!codexData()) return
+    renderCodex()
+    var box = el('codexSearch')
+    if (box) box.addEventListener('input', function(event){
+      state.codexQuery = event.target.value
+      renderCodex()
+    })
+    var host = el('codexList')
+    if (host) host.addEventListener('click', onCodexClick)
+    var wide = el('codexTable')
+    if (wide) wide.addEventListener('click', onCodexClick)
+    var tabs = el('codexTabs')
+    if (tabs) tabs.addEventListener('click', onCodexClick)
+  }
 
   function renderJobs(){
     var list = boot.jobs
@@ -828,6 +1123,7 @@ const JS = String.raw`
   renderNews()
   renderLinks()
   renderFooter()
+  mountCodex()
   el('legend').textContent = boot.legend
   el('captured').textContent = '技能表 ' + boot.capturedAt + ' 抓取'
   fetchLive()
@@ -862,6 +1158,9 @@ function buildPage(options) {
     links: LINKS,
     news: NEWS,
     hosted,
+    /* 怪物图鉴：和技能表一样烘进页面，因为这份产物的定位就是「离线可用」。
+       它是 boot 里唯一一块 ~250 KB 的数据，也正因如此手机版打开时不需要联网。 */
+    codex: CODEX,
   }
 
   return `<!doctype html>
@@ -901,6 +1200,14 @@ ${ASSETS.favicon === null || hosted ? '' : `<link rel="apple-touch-icon" href="$
 
   <h2>私服在线</h2>
   <div class="grid" id="live"></div>
+
+  <h2>怪物图鉴 · 出现地点与等级</h2>
+  <input id="codexSearch" placeholder="查怪物或地点（中/日/英文，或 0x… 编号）">
+  <div class="jobs" id="codexTabs"></div>
+  <div class="toolbar"><span class="tag" id="codexMeta"></span></div>
+  <div id="codexList"></div>
+  <div id="codexTable" class="wideWrap"></div>
+  <div id="codexDetail"></div>
 
   <h2>职业技能数据</h2>
   <input id="search" placeholder="搜索技能名、中文名或备注">
@@ -982,11 +1289,15 @@ function checkPage(html, label) {
   })
 
   const boot = JSON.parse(scripts[0])
-  for (const key of ['jobs', 'links', 'legend', 'capturedAt', 'defaultJob']) {
+  for (const key of ['jobs', 'links', 'legend', 'capturedAt', 'defaultJob', 'codex']) {
     if (boot[key] === undefined) throw new Error(`${label}: boot data is missing "${key}"`)
   }
   if (Object.keys(boot.links).length < 8) throw new Error(`${label}: the link table looks too small to be the real one`)
-  for (const id of ['live', 'links', 'jobs', 'skills', 'detail', 'sort', 'legend', 'editState']) {
+  if (!boot.codex.spots || boot.codex.spots.length < 100) {
+    throw new Error(`${label}: the monster codex looks too small to be the real one`)
+  }
+  for (const id of ['live', 'links', 'jobs', 'skills', 'detail', 'sort', 'legend', 'editState',
+                    'codexSearch', 'codexList', 'codexTable', 'codexDetail', 'codexMeta']) {
     if (!html.includes(`id="${id}"`)) throw new Error(`${label}: the page has no #${id} container`)
   }
   return boot
@@ -1000,6 +1311,7 @@ function main() {
   const kb = (Buffer.byteLength(html) / 1024).toFixed(0)
   console.log(`  ${path.basename(OUT)}  ${kb} KB`)
   console.log('  jobs: ' + SNAPSHOT.jobs.length + ', details: ' + manifest.counts.details + ', cells: ' + manifest.counts.cells)
+  console.log('  codex: ' + CODEX.stats.monsters + ' 种怪物, ' + CODEX.stats.locations + ' 个地点, ' + CODEX.stats.spots + ' 条生成记录')
   console.log('  links: ' + Object.keys(boot.links).length + ', 内联脚本解析通过')
   console.log('  -> ' + OUT)
 }

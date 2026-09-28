@@ -1,10 +1,17 @@
 /**
- * Build step: prove `src/parsers.js` still matches the plugin's definitions.
+ * Build step: prove the portable build and the plugin still agree.
  *
- * The portable build cannot import the plugin at runtime, so those five functions
- * are copied. A copy that silently diverges would make the exe and the in-app
- * panel disagree about the same server payload, which is worse than a failed
- * build.
+ * Two things are compared:
+ *
+ *   1. `src/parsers.js` against the plugin's own definitions. The portable build
+ *      cannot import the plugin at runtime, so those five functions are copied; a
+ *      copy that silently diverges would make the exe and the in-app panel
+ *      disagree about the same server payload, which is worse than a failed
+ *      build.
+ *   2. `src/monsters.js` against the plugin's `lib/monsters.js`. The monster
+ *      codex is one generated snapshot that both halves ship by design, and the
+ *      two files are meant to be byte-identical: a divergence means the panel and
+ *      the website answer the same question about the same monster differently.
  *
  * The comparison splits both files into blocks at each top-level `function`
  * keyword and compares block by block after stripping comments and whitespace.
@@ -15,12 +22,18 @@
  */
 'use strict'
 
+const crypto = require('node:crypto')
 const fs = require('node:fs')
 const path = require('node:path')
 
 const ROOT = path.join(__dirname, '..')
-const PLUGIN_INDEX = 'C:\\Users\\chenkehan\\.dsh\\plugins\\dsh-plugin-ddon-hub\\lib\\index.js'
+const PLUGIN_DIR = 'C:\\Users\\chenkehan\\.dsh\\plugins\\dsh-plugin-ddon-hub'
+const PLUGIN_INDEX = path.join(PLUGIN_DIR, 'lib', 'index.js')
 const LOCAL = path.join(ROOT, 'src', 'parsers.js')
+/* The generated snapshot both halves ship. Not imported (the plugin half is ESM
+   and this build is CommonJS) — the bytes are what has to match. */
+const MONSTERS_LOCAL = path.join(ROOT, 'src', 'monsters.js')
+const MONSTERS_PLUGIN = path.join(PLUGIN_DIR, 'lib', 'monsters.js')
 
 const NAMES = ['textOf', 'normalizeDate', 'parseNews', 'parseRevivalChannels', 'parseLegacyWorlds']
 
@@ -107,6 +120,22 @@ function main() {
     process.exit(1)
   }
   console.log('  parsers.js is in sync with the plugin')
+
+  /* --- the generated monster codex -------------------------------------- */
+  const codexLocal = fs.readFileSync(MONSTERS_LOCAL)
+  const codexPlugin = fs.readFileSync(MONSTERS_PLUGIN)
+  const digest = (buffer) => crypto.createHash('sha256').update(buffer).digest('hex')
+  if (codexLocal.equals(codexPlugin)) {
+    console.log(`  ok  monsters.js is byte-identical (${(codexLocal.length / 1024).toFixed(0)} KB, sha256 ${digest(codexLocal).slice(0, 12)})`)
+  } else {
+    console.error('\nsync-check failed:')
+    console.error('  src/monsters.js and the plugin\'s lib/monsters.js differ.')
+    console.error(`    src    : ${codexLocal.length} bytes, sha256 ${digest(codexLocal).slice(0, 16)}`)
+    console.error(`    plugin : ${codexPlugin.length} bytes, sha256 ${digest(codexPlugin).slice(0, 16)}`)
+    console.error('\nDo not patch either by hand. Regenerate both from the source data:')
+    console.error('  python ddon-arc/build-monsters-module.py')
+    process.exit(1)
+  }
 }
 
 main()
