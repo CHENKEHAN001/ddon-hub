@@ -337,6 +337,40 @@ const JS = String.raw`
     var out = { byMonster: [], byStage: [] }
     for (var key in byMonster) if (Object.prototype.hasOwnProperty.call(byMonster, key)) out.byMonster.push(byMonster[key])
     for (var key2 in byStage) if (Object.prototype.hasOwnProperty.call(byStage, key2)) out.byStage.push(byStage[key2])
+
+    /*
+     * 每个条目附带一份「掉落物名称」的合并文本，供搜索用。
+     *
+     * 玩家常拿着一个素材找"去哪刷"（搜「抗侵薬」「裂縫水晶的碎片」），所以掉落物
+     * 也要能搜。搜索时如果每条都遍历掉落表，300 多条 × 每次按键会有点浪费；
+     * 索引本来就只建一次，在这里顺手合并成字符串最省事。
+     */
+    var collectItems = function (entry){
+      var seen = {}
+      var parts = []
+      for (var i = 0; i < entry.rows.length; i++){
+        var tables = entry.rows[i].d || []
+        for (var j = 0; j < tables.length; j++){
+          var table = codex.drops[String(tables[j])]
+          if (!table) continue
+          for (var k = 0; k < table.items.length; k++){
+            var iid = table.items[k][0]
+            if (seen[iid]) continue
+            seen[iid] = 1
+            var named = codex.itemNames ? codex.itemNames[iid] : null
+            if (named){
+              if (named.zh) parts.push(named.zh)
+              if (named.ja) parts.push(named.ja)
+              if (named.en) parts.push(named.en)
+            }
+          }
+        }
+      }
+      entry.itemText = parts.join(' ')
+    }
+    for (var a = 0; a < out.byMonster.length; a++) collectItems(out.byMonster[a])
+    for (var b = 0; b < out.byStage.length; b++) collectItems(out.byStage[b])
+
     state.codexIndex = out
     return out
   }
@@ -370,7 +404,22 @@ const JS = String.raw`
    * 搜索跨视图：搜的是地名而当前在「按怪物」，或者反过来，都会自动切过去。
    * 早先只在当前视图里过滤，于是搜「黑咒迷宫」在按怪物视图下是空的——用户看到
    * 的就是"搜不到"，而他并不知道要先切视图。查询词本身就能说明该看哪一边。
+   * 掉落物名称也参与匹配（见 codexIndex 里的 itemText）。
    */
+  function matchesItemName(text, needle){
+    if (!needle || !text) return false
+    return codexFold(text).indexOf(needle) >= 0
+  }
+
+  /** 掉落物名称显示成「中文 日文」；没译文时退回日文。 */
+  function itemPair(named, fallbackId){
+    if (!named) return fallbackId
+    var zh = named.zh || ''
+    var ja = named.ja || ''
+    if (zh === '') return ja || named.en || fallbackId
+    return ja === '' || ja === zh ? zh : zh + ' ' + ja
+  }
+
   function codexRows(){
     var codex = codexData()
     if (!codex) return []
@@ -385,6 +434,8 @@ const JS = String.raw`
         if (row.zh && codexFold(row.zh).indexOf(needle) >= 0) return true
         if (row.ja && row.ja.toLowerCase().indexOf(needle) >= 0) return true
         if (row.en && row.en.toLowerCase().indexOf(needle) >= 0) return true
+        /* 掉落物也算命中：玩家常常是拿着一个素材找"去哪刷" */
+        if (matchesItemName(entry.itemText, needle)) return true
         return false
       })
     }
@@ -435,7 +486,7 @@ const JS = String.raw`
       for (var y = 0; y < table.items.length; y++){
         var item = table.items[y]
         var named = codex.itemNames ? codex.itemNames[item[0]] : null
-        var label = named ? (named.zh || named.ja || named.en || item[0]) : item[0]
+        var label = itemPair(named, item[0])
         html += '<span class="numChip">' + esc(label) + ' <b>' + esc(chanceText(item[3])) + '</b>'
         if (item[1] !== item[2]) html += ' ×' + esc(item[1]) + '-' + esc(item[2])
         html += '</span>'
