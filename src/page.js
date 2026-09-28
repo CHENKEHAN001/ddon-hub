@@ -512,21 +512,33 @@ const JS = `
   function toggleCodexRow(key){
     var mainRow = findCodexRow(key)
     if (!mainRow) return
-    var anchorBottom = mainRow.getBoundingClientRect().bottom
+    /*
+     * 锚点取「该行的顶边」。用 bottom 是错的：行高随展开/收起变化，bottom 跟着变，
+     * 补偿量里就混进了行高差——实测关闭时该行被往上顶 56~169px，行越高偏得越多。
+     * 保持 top 不动才符合视觉直觉：点开的行留在原地，内容只在它下面增减。
+     * 展开和收起都要补（收起同样是布局变化，之前只在展开时补，正是漏掉的那一半）。
+     */
+    var anchorTop = mainRow.getBoundingClientRect().top
     var next = state.codexOpen === key ? null : key
     var root = document.documentElement
     var previousAnchor = root.style.overflowAnchor
     root.style.overflowAnchor = 'none'
     state.codexOpen = next
     renderCodex()
-    if (next === null){ root.style.overflowAnchor = previousAnchor; return }
     requestAnimationFrame(function(){
       var fresh = findCodexRow(key)
       if (fresh){
-        var delta = fresh.getBoundingClientRect().bottom - anchorBottom
+        var delta = fresh.getBoundingClientRect().top - anchorTop
         if (Math.abs(delta) > 1) window.scrollTo(0, window.scrollY + delta)
       }
-      root.style.overflowAnchor = previousAnchor
+      requestAnimationFrame(function(){
+        var again = findCodexRow(key)
+        if (again){
+          var rest = again.getBoundingClientRect().top - anchorTop
+          if (Math.abs(rest) > 1) window.scrollTo(0, window.scrollY + rest)
+        }
+        root.style.overflowAnchor = previousAnchor
+      })
     })
   }
 
@@ -902,32 +914,31 @@ const JS = `
     if (rowNode){
       var ja = rowNode.getAttribute('data-ja')
       var zh = rowNode.getAttribute('data-zh')
-      if (state.selected !== null && state.selected.ja === ja && state.selected.zh === zh){
-        state.selected = null
-        renderTable(); renderDetail()
-      } else {
-        state.selected = { ja: ja, zh: zh }
-        /* 详表撑在页面底部，展开后把这一行挤走，看起来就是"点一下跳到下面"。
-           所以记下这一行展开前的位置，下一帧补回来；不再 scrollIntoView。
-           补偿期间关掉滚动锚定，否则它会和补偿抢着改滚动位置。 */
-        var rowBottom = rowNode.getBoundingClientRect().bottom
-        var root2 = document.documentElement
-        var anchorBefore = root2.style.overflowAnchor
-        root2.style.overflowAnchor = 'none'
-        renderTable(); renderDetail()
-        requestAnimationFrame(function(){
-          var fresh = null
-          var all = document.querySelectorAll('#skillsTable tbody tr')
-          for (var i = 0; i < all.length; i++){
-            if (all[i].getAttribute('data-ja') === ja && all[i].getAttribute('data-zh') === zh){ fresh = all[i]; break }
-          }
-          if (fresh){
-            var delta = fresh.getBoundingClientRect().bottom - rowBottom
-            if (Math.abs(delta) > 1) window.scrollTo(0, window.scrollY + delta)
-          }
-          root2.style.overflowAnchor = anchorBefore
-        })
-      }
+      var closing = state.selected !== null && state.selected.ja === ja && state.selected.zh === zh
+      state.selected = closing ? null : { ja: ja, zh: zh }
+      /*
+       * 详表撑在页面底部，展开/收起都会让这一行相对视口移动，看起来就是"点一下跳到
+       * 下面"。所以记下这一行变化前的位置，下一帧补回来；不再 scrollIntoView。
+       * 锚点用 top（bottom 会随详表高度变，补偿量里混进行高差）；开和关都要补。
+       * 补偿期间关掉滚动锚定，否则它会和补偿抢着改滚动位置。
+       */
+      var rowTop = rowNode.getBoundingClientRect().top
+      var root2 = document.documentElement
+      var anchorBefore = root2.style.overflowAnchor
+      root2.style.overflowAnchor = 'none'
+      renderTable(); renderDetail()
+      requestAnimationFrame(function(){
+        var fresh = null
+        var all = document.querySelectorAll('#skillsTable tbody tr')
+        for (var i = 0; i < all.length; i++){
+          if (all[i].getAttribute('data-ja') === ja && all[i].getAttribute('data-zh') === zh){ fresh = all[i]; break }
+        }
+        if (fresh){
+          var delta = fresh.getBoundingClientRect().top - rowTop
+          if (Math.abs(delta) > 1) window.scrollTo(0, window.scrollY + delta)
+        }
+        root2.style.overflowAnchor = anchorBefore
+      })
       return
     }
   })

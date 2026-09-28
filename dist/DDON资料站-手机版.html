@@ -664,25 +664,29 @@ a.chip:hover{border-color:var(--dim);color:var(--fg)}
     if (key === null) return
     var mainRow = findCodexRow(key)
     if (!mainRow) return
-    var anchorBottom = mainRow.getBoundingClientRect().bottom
+    /*
+     * 锚点取「该行的顶边」。用 bottom 是错的：行高随展开/收起变化，bottom 会跟着
+     * 变，于是补偿量里混进了行高差——实测关闭时该行被往上顶 56~169px，行越高偏得
+     * 越多。保持 top 不动才符合视觉直觉：点开的行留在原地，只在它下面长内容。
+     */
+    var anchorTop = mainRow.getBoundingClientRect().top
     var next = state.codexOpen === key ? null : key
     var root = document.documentElement
     var previousAnchor = root.style.overflowAnchor
     root.style.overflowAnchor = 'none'
     state.codexOpen = next
     renderCodex()
-    if (next === null){ root.style.overflowAnchor = previousAnchor; return }
     requestAnimationFrame(function(){
-      /* 补两次：一次修主位移，再一次收掉布局在该帧之后才定型的残余 */
+      /* 补两次：第一次修主位移，第二次收掉布局在该帧之后才定型的残余 */
       var fresh = findCodexRow(key)
       if (fresh){
-        var delta = fresh.getBoundingClientRect().bottom - anchorBottom
+        var delta = fresh.getBoundingClientRect().top - anchorTop
         if (Math.abs(delta) > 1) window.scrollTo(0, window.scrollY + delta)
       }
       requestAnimationFrame(function(){
         var again = findCodexRow(key)
         if (again){
-          var rest = again.getBoundingClientRect().bottom - anchorBottom
+          var rest = again.getBoundingClientRect().top - anchorTop
           if (Math.abs(rest) > 1) window.scrollTo(0, window.scrollY + rest)
         }
         root.style.overflowAnchor = previousAnchor
@@ -891,44 +895,53 @@ a.chip:hover{border-color:var(--dim);color:var(--fg)}
   }
 
   /**
-   * 展开技能详表，同时保持视口别跳。
+   * 技能行按 data-ja 找，只挑**真正可见**的那个。
    *
-   * 展开会把详表面板（页面底部）撑开，于是被点的技能行和面板都会相对视口移动。
-   * 优先把**被点的那一行**钉回原位（用户看的就是它），如果那样会把面板推出视口，
-   * 再退一步把面板拉进视口——两种补偿取更小的那个，避免把页面滚到第三个地方去。
+   * 和 findCodexRow 同一个坑：同名技能行有两份——手机卡片在 #skills、宽屏表格行在
+   * #skillsTable，其中一个 display:none。谁先被 querySelector 撞上就可能是隐藏的，
+   * rect 全返回 0，拿它当锚点算出来的补偿量就是错的（实测技能行被顶走 406px，
+   * diag 里 freshTop=0 就是证据）。
    */
-  function renderDetailKeeping(){
-    var row = document.querySelector('#skills .skill.on, #skillsTable tbody tr.on')
-    var rowBottom = row ? row.getBoundingClientRect().bottom : null
+  function findSkillRow(key){
+    if (key === null || key === undefined) return null
+    var visible = function (nodes){
+      for (var i = 0; i < nodes.length; i++){
+        var rect = nodes[i].getBoundingClientRect()
+        if (rect.width > 0 && rect.height > 0) return nodes[i]
+      }
+      return nodes.length > 0 ? nodes[0] : null
+    }
+    var table = visible(document.querySelectorAll('#skillsTable tbody tr[data-ja="' + key + '"]'))
+    if (table !== null) return table
+    return visible(document.querySelectorAll('#skills .skill[data-ja="' + key + '"]'))
+  }
+
+  /**
+   * 展开/收起技能详表，同时保持被点的那一行在屏幕上的位置不变。
+   *
+   * 详表面板在页面底部，展开和收起都会让它下面的内容整体移动，于是被点的行相对
+   * 视口滑动，看起来就是"点一下跳到下面"。锚点用**行的顶边**：bottom 会随行高变，
+   * 补偿量里会混进行高差（图鉴那边实测关闭时被顶走 56~169px 就是这么来的）。
+   * 开和关都要补——之前只在展开时补，收起那一半漏了。
+   */
+  function renderDetailKeeping(row){
+    var anchorTop = row ? row.getBoundingClientRect().top : null
     var key = row ? row.getAttribute('data-ja') : null
-    var panel = el('detail')
-    var panelBottom = panel ? panel.getBoundingClientRect().bottom : null
     var root = document.documentElement
     var previousAnchor = root.style.overflowAnchor
     /* 补偿期间必须关掉滚动锚定：它会在 innerHTML 重建时自己调滚动，和补偿抢位置
        （之前实测请求 -495、实际没走到，就是它干的）。 */
     root.style.overflowAnchor = 'none'
-    renderList(); renderDetail()
-    if (rowBottom === null || key === null){ root.style.overflowAnchor = previousAnchor; return }
+    /* 两个容器都要刷：手机看 #skills 卡片、宽屏看 #skillsTable 表格。
+       只调 renderList 会让宽屏表格不更新——选中态没跟上，补偿也就量错了对象
+       （实测技能行被顶走 406/1218px 就是这么来的）。 */
+    renderList(); renderTable(); renderDetail()
+    if (anchorTop === null || key === null){ root.style.overflowAnchor = previousAnchor; return }
     requestAnimationFrame(function(){
-      var all = document.querySelectorAll('#skills .skill, #skillsTable tbody tr')
-      var fresh = null
-      for (var i = 0; i < all.length; i++){
-        if (all[i].getAttribute('data-ja') === key){ fresh = all[i]; break }
-      }
+      var fresh = findSkillRow(key)
       if (fresh){
-        var rowDelta = fresh.getBoundingClientRect().bottom - rowBottom
-        var shift = rowDelta
-        var node = el('detail')
-        if (node && panelBottom !== null && Math.abs(rowDelta) > 1){
-          /* 只按行补偿，面板会不会被推出视口 */
-          var panelAfter = node.getBoundingClientRect().bottom - rowDelta
-          var vh = window.innerHeight || document.documentElement.clientHeight
-          if (panelAfter > vh + 80){
-            /* 行完全不动会把面板甩到视口外，改用一个折中：让面板落在视口内 */
-            shift = node.getBoundingClientRect().bottom - (vh - 40)
-          }
-        }
+        var freshTop = fresh.getBoundingClientRect().top
+        var shift = freshTop - anchorTop
         if (Math.abs(shift) > 1) window.scrollTo(0, window.scrollY + shift)
       }
       root.style.overflowAnchor = previousAnchor
@@ -1269,7 +1282,13 @@ a.chip:hover{border-color:var(--dim);color:var(--fg)}
     var jobNode = t.closest ? t.closest('.job') : null
     if (jobNode){ state.job = jobNode.getAttribute('data-job'); state.selected = null; state.editing = null; renderJobs(); renderSort(); renderList(); renderDetail(); return }
 
-    if (t.id === 'closeDetail'){ state.selected = null; renderDetail(); renderList(); return }
+    if (t.id === 'closeDetail'){
+      /* 收起同样要补偿：详表缩回去会把被点的行往上顶 */
+      var closingKey = state.selected === null ? null : state.selected.ja
+      state.selected = null
+      renderDetailKeeping(findSkillRow(closingKey))
+      return
+    }
     if (t.id === 'refresh'){ fetchLive(); toast('已刷新在线人数'); return }
     if (t.id === 'export'){ exportEdits(); return }
 
@@ -1324,14 +1343,10 @@ a.chip:hover{border-color:var(--dim);color:var(--fg)}
     var card2 = t.closest ? t.closest('#skills .skill, #skillsTable tbody tr') : null
     if (card2){
       var ja = card2.getAttribute('data-ja'), zh = card2.getAttribute('data-zh')
-      if (state.selected !== null && state.selected.ja === ja && state.selected.zh === zh){
-        state.selected = null
-        renderList(); renderDetail()
-      } else {
-        state.selected = { ja: ja, zh: zh }
-        /* 展开时用补偿版：详表撑开后把这一行钉在原位，而不是滚过去 */
-        renderDetailKeeping()
-      }
+      /* 开和关都走补偿版：详表撑开/收起都会让这一行相对视口滑动 */
+      if (state.selected !== null && state.selected.ja === ja && state.selected.zh === zh) state.selected = null
+      else state.selected = { ja: ja, zh: zh }
+      renderDetailKeeping(card2)
       return
     }
   })
