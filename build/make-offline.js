@@ -563,8 +563,42 @@ const JS = String.raw`
         }
         for (var s2 = 0; s2 < rec.shop.length; s2++){
           var sh = rec.shop[s2]
-          lines.shop.push('商店 #' + sh.id + ' ' + (sh.p == null ? '' : sh.p + ' 金') +
-                          (sh.st ? '（库存 ' + sh.st + '）' : ''))
+          /*
+           * 商店显示成「哪里的谁开的店」。
+           *
+           * Shop.json 只给 ShopId 与价格，玩家看到「商店 #100」毫无意义；归属来自
+           * shops_function.json（StageId -> NpcId -> ShopId）与 npc_names.csv。
+           */
+          var where = ''
+          var owners = sh.o || []
+          if (owners.length > 0){
+            var bits = []
+            var seenPlace = {}
+            for (var oi = 0; oi < owners.length; oi++){
+              var own = owners[oi]
+              var stageRow = codex.stages ? codex.stages[own.s] : null
+              var stage = codexName(codex.stages, own.s, '')
+              /* 有些区域是开发期的占位名（st0027 テスト部屋 之类），拿它当「店铺在哪」
+                 只会更糊涂——这种情况用英文名，它指向真正的地标。 */
+              if (/テスト|测试|Test Room|st\d{4}/i.test(stage)){
+                stage = (stageRow && stageRow.en) || stage
+              }
+              if (!stage || /^\d+$/.test(stage)) continue
+              var label = stage + '·' + own.npc
+              if (seenPlace[label]) continue
+              seenPlace[label] = 1
+              bits.push(label)
+            }
+            if (bits.length > 0){
+              where = bits.join(' / ')
+              if (sh.on && sh.on > bits.length) where += ' 等 ' + sh.on + ' 处'
+            }
+          }
+          var parts = []
+          if (sh.p != null) parts.push(sh.p + ' ' + walletLabel(sh.w))
+          parts.push('库存 ' + (sh.st ? String(sh.st) : '不限'))
+          if (sh.sn) parts.push('全店 ' + sh.sn + ' 种')
+          lines.shop.push((where ? where + '：' : '商店 ' + sh.id + '：') + parts.join(' · '))
         }
         for (var x2 = 0; x2 < rec.exchange.length; x2++){
           var ex = rec.exchange[x2]
@@ -825,6 +859,25 @@ const JS = String.raw`
   /** 来源类型的显示名。 */
   var ITEM_KIND_LABEL = { drop: '掉落', gather: '采集', shop: '商店', exchange: '兑换' }
 
+  /*
+   * 商店结算用的货币。
+   *
+   * 数值取自 Arrowgene 服务端的 WalletType 枚举（Arrowgene.Ddon.Shared/Model/WalletType.cs）。
+   * Shop.json 只给一个数字，不给名字，所以 #100 那种编号对玩家没有意义——至少要把
+   * 「用什么买」和「这家店有多少商品」说清楚。
+   */
+  var WALLET_LABEL = {
+    0: '无', 1: '金币', 2: '裂隙点数', 3: '血之宝珠', 4: '银票',
+    5: '黄金宝石', 6: '租赁点', 7: 'JP 重置', 8: 'CP 重置', 9: '高阶宝珠',
+    10: '领地点数', 11: '冒险通行证', 12: '定制服务票', 13: '黑咒迷宫重置券',
+    14: '金龙印', 15: '银龙印', 16: '红龙印',
+  }
+
+  function walletLabel(code){
+    if (code === null || code === undefined) return ''
+    return WALLET_LABEL[code] || ('货币 #' + code)
+  }
+
   function itemKindChips(entry){
     var html = ''
     for (var k in ITEM_KIND_LABEL){
@@ -894,7 +947,15 @@ const JS = String.raw`
         if ((entry.lines[k2] || []).length > 0){ first = entry.lines[k2][0]; break }
       }
       table += '<tr class="' + (open ? 'on' : '') + '" data-codex="item:' + esc(entry.id) + '">'
-      table += '<td>' + esc(row.zh || row.ja || row.en || entry.id) + '</td>'
+      /* 行里只放第一条来源，容易让人以为只有这一个；全部来源挂 title，悬停可见 */
+      var allLines = []
+      for (var k3 in ITEM_KIND_LABEL){
+        if (!Object.prototype.hasOwnProperty.call(ITEM_KIND_LABEL, k3)) continue
+        var ls = entry.lines[k3] || []
+        for (var li = 0; li < ls.length; li++) allLines.push(ITEM_KIND_LABEL[k3] + '：' + ls[li])
+      }
+      table += '<td title="' + esc(allLines.join('\n')) + '">' +
+               esc(row.zh || row.ja || row.en || entry.id) + '</td>'
       table += '<td>' + esc(row.ja || '') + '</td>'
       table += '<td class="num">' + entry.sourceCount + '</td>'
       table += '<td>' + esc(kinds.join(' · ')) + '</td>'
