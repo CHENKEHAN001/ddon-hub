@@ -98,6 +98,10 @@ const CODEX = (() => {
         spots: value.spots,
         drops: value.drops,
         stats: value.stats,
+        /* 一个服务器可能有多份生成点数据（Revival 的普通/BR/联动/自定义），漏了这行
+           前端就拿不到，玩法切换行会是空的 */
+        variants: value.variants,
+        defaultVariant: value.defaultVariant,
       }
     }
     const first = Object.keys(servers)[0]
@@ -156,6 +160,9 @@ input{min-height:34px;padding:6px 10px}
 .codexServerLabel{color:var(--dim);font-size:12px;align-self:center}
 .codexServerSource{color:var(--dim);font-size:11.5px;align-self:center;word-break:break-word}
 #codexServers{border-bottom:1px solid var(--line);padding-bottom:7px}
+#codexVariants{padding-top:2px}
+/* 玩法按钮上带一份生成点数，方便一眼看出这玩法有多大 */
+.codexVariantCount{color:var(--dim);font-size:10.5px;margin-left:5px;font-variant-numeric:tabular-nums}
 /* 物品来源：按类型分组，每条来源一个小胶囊 */
 .codexFilterLabel{color:var(--dim);font-size:12px;align-self:center;margin-left:6px}
 .itemSources{display:flex;flex-direction:column;gap:5px;margin-top:7px}
@@ -286,7 +293,7 @@ const JS = String.raw`
   var KEY_NOTES = 'ddon-hub-notes-v1'
   var state = { job: boot.defaultJob, query: '', sort: 'dps', selected: null, hub: null, editing: null,
     codexView: 'monster', codexSort: 'spots', codexQuery: '', codexOpen: null, codexIndex: null,
-    codexServer: null, codexItemKind: 'all', codexItemLimit: 300 }
+    codexServer: null, codexItemKind: 'all', codexItemLimit: 300, codexVariant: null }
 
   function el(id){ return document.getElementById(id) }
   function esc(v){ return String(v === null || v === undefined ? '' : v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;') }
@@ -378,6 +385,26 @@ const JS = String.raw`
   }
 
   /*
+   * 一个服务器可能有多份生成点数据（Revival 有四份：普通 / Boss Rush / 联动 / 自定义）。
+   * 它们不是"频道"，是四种玩法变体，各自的怪物与掉落都不同，所以要能分别看。
+   */
+  function codexVariants(){
+    var servers = codexServers()
+    if (!servers) return null
+    var pick = servers[codexServerKey()]
+    return pick && pick.variants ? pick.variants : null
+  }
+
+  function codexVariantKey(){
+    var variants = codexVariants()
+    if (!variants) return null
+    if (state.codexVariant && variants[state.codexVariant]) return state.codexVariant
+    var servers = codexServers()
+    var pick = servers[codexServerKey()]
+    return pick.defaultVariant || codexKeys(variants)[0]
+  }
+
+  /*
    * 生成点存成紧凑数组（[m, s, min, max, n, exp, [掉落表id...]]）——三套数据一起内联，
    * 字段名重复上万次太浪费。这里解包回上层用的对象形状，其余代码一行都不用改。
    *
@@ -405,6 +432,10 @@ const JS = String.raw`
     var key = codexServerKey()
     var pick = servers[key]
     if (!pick) return codex
+    /* 有变体就用变体的生成点与掉落；解包缓存按「服务器:变体」分键，切频道要分开 */
+    var vkey = codexVariantKey()
+    var data = vkey ? (pick.variants || {})[vkey] : null
+    if (!data) data = pick
     return {
       capturedAt: codex.capturedAt,
       charMap: codex.charMap,
@@ -415,10 +446,11 @@ const JS = String.raw`
       itemSources: codex.itemSources,
       label: pick.label,
       declaredIn: pick.declaredIn,
-      source: pick.source,
-      spots: codexSpots(pick.spots, key),
-      drops: pick.drops,
-      stats: pick.stats,
+      source: data.source || pick.source,
+      variantLabel: data.label || '',
+      spots: codexSpots(data.spots, key + (vkey ? ':' + vkey : '')),
+      drops: data.drops,
+      stats: data.stats,
     }
   }
 
@@ -783,6 +815,30 @@ const JS = String.raw`
    * 明确选择看哪一份，并把「数据源」写出来——否则同一个怪物在两个服掉的东西不同，
    * 会以为是数据错了。
    */
+  /**
+   * 频道（玩法变体）切换行。
+   *
+   * 一个服务器的互动地图可能提供多份生成点数据（Revival 有普通 / Boss Rush / 联动 /
+   * 自定义四份），它们不是服务器频道，而是四种玩法，怪物与掉落都不同。只有多于一份时
+   * 才显示这一行。
+   */
+  function renderCodexVariants(){
+    var host = el('codexVariants')
+    if (!host) return
+    var variants = codexVariants()
+    if (!variants || codexKeys(variants).length < 2){ host.innerHTML = ''; host.style.display = 'none'; return }
+    host.style.display = ''
+    var current = codexVariantKey()
+    var html = '<span class="codexServerLabel">玩法</span>'
+    for (var key in variants){
+      if (!Object.prototype.hasOwnProperty.call(variants, key)) continue
+      var v = variants[key]
+      html += '<div class="job' + (key === current ? ' on' : '') + '" data-variant="' + esc(key) + '">' +
+              esc(v.label) + '<span class="codexVariantCount">' + v.stats.spots + '</span></div>'
+    }
+    host.innerHTML = html
+  }
+
   function renderCodexServers(){
     var host = el('codexServers')
     if (!host) return
@@ -803,6 +859,7 @@ const JS = String.raw`
     var host = el('codexTabs')
     if (!host) return
     renderCodexServers()
+    renderCodexVariants()
     var views = [['monster', '按怪物'], ['stage', '按地点'], ['item', '按物品']]
     /* 排序项随视图变：「生成点」「等级」对物品没有意义，物品按「来源数 / 名称」排。 */
     var sorts = state.codexView === 'item'
@@ -1118,12 +1175,25 @@ const JS = String.raw`
       renderCodex()
       return
     }
+    /* 切玩法变体：生成点/掉落表整套换掉，索引也要重建 */
+    var variantNode = target.closest('[data-variant]')
+    if (variantNode){
+      var nextVariant = variantNode.getAttribute('data-variant')
+      if (nextVariant !== state.codexVariant){
+        state.codexVariant = nextVariant
+        state.codexIndex = null
+        state.codexOpen = null
+      }
+      renderCodex()
+      return
+    }
     /* 切服务器：生成点/掉落表整套换掉，索引必须重建（缓存的 id 只对上一个服有效） */
     var serverNode = target.closest('[data-server]')
     if (serverNode){
       var nextServer = serverNode.getAttribute('data-server')
       if (nextServer !== state.codexServer){
         state.codexServer = nextServer
+        state.codexVariant = null
         state.codexIndex = null
         state.codexOpen = null
       }
@@ -1238,9 +1308,11 @@ const JS = String.raw`
     if (wide) wide.addEventListener('click', onCodexClick)
     var tabs = el('codexTabs')
     if (tabs) tabs.addEventListener('click', onCodexClick)
-    /* 服务器切换是独立一行（#codexServers），不绑就点不动 */
+    /* 服务器与玩法切换各自独立一行，都要单独绑（漏绑就是"点了没反应"） */
     var servers = el('codexServers')
     if (servers) servers.addEventListener('click', onCodexClick)
+    var variants = el('codexVariants')
+    if (variants) variants.addEventListener('click', onCodexClick)
   }
 
   function renderJobs(){
@@ -1983,6 +2055,7 @@ ${ASSETS.favicon === null || hosted ? '' : `<link rel="apple-touch-icon" href="$
 
   <h2>怪物图鉴 · 出现地点与等级</h2>
   <div class="jobs" id="codexServers"></div>
+  <div class="jobs" id="codexVariants"></div>
   <input id="codexSearch" placeholder="查怪物或地点（中/日/英文，或 0x… 编号）">
   <div class="jobs" id="codexTabs"></div>
   <div class="toolbar"><span class="tag" id="codexMeta"></span></div>
