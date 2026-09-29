@@ -225,6 +225,20 @@ a.chip:hover{border-color:var(--dim);color:var(--fg)}
   #skills{display:none}
   #codexList{display:none}
   .wideWrap{display:block}
+  /*
+   * 图鉴与技能各自在自己的框里滚动，页面本身不再被拉到几万像素。
+   *
+   * 以前两个列表是直接铺在页面里，332 种怪物 + 39 行技能连在一起要滚很久，想看
+   * 图鉴就得先滑过整个技能表。现在每个列表一个框，框内滚（表头是 sticky，跟着框）。
+   * 只在宽屏这么做：手机上给列表套滚动框会变成"滚动陷阱"——手指在框里滑不动页面，
+   * 所以手机仍按整页滚动（卡片列表本来就是竖向长列表，那样更好用）。
+   */
+  .wideWrap{
+    max-height:70vh;
+    overflow:auto;
+    overscroll-behavior:contain;
+    scrollbar-width:thin;
+  }
   .jobs{gap:5px;margin:6px 0 10px}
   .job{padding:3px 12px;min-height:26px;font-size:12.5px}
   #search{width:240px!important;margin-top:0}
