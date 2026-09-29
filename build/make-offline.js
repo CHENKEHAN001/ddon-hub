@@ -204,7 +204,7 @@ input{min-height:34px;padding:6px 10px}
     overflow:auto;
     scrollbar-width:thin;
   }
-  .codexDetailRow .detailHead{
+  .codexDetailRow .detailTitle{
     position:sticky;
     top:0;
     z-index:2;
@@ -1191,11 +1191,11 @@ const JS = String.raw`
      */
     var html = '<div class="detail" data-codex-close="' + esc(key) + '">'
     /*
-     * 这一格是「怪物 X · N 个地点」，给它 detailHead 让它吸在表头下面。
+     * 这一格是「怪物 X · N 个地点」，给它 detailTitle 让它吸在表头下面。
      * 详情可能有几百行（骷髏騎士 173 个地点），滚到中间时标题早就滚走了，
      * 光看掉落数据根本不知道这是谁的详情。
      */
-    html += '<div class="detailGrid detailHead">'
+    html += '<div class="detailGrid detailTitle">'
     html += '<div class="kv"><span class="kvKey">' + (isMonster ? '怪物' : '地点') + '</span><span class="kvVal">'
     html += esc(isMonster ? codexName(codex.monsters, id, id) : codexName(codex.stages, id, id))
     html += ' <span class="tag">' + esc(entry.row.ja || '') + '</span>'
@@ -1238,7 +1238,8 @@ const JS = String.raw`
     if (closeNode && !target.closest('[data-cell]') && !target.closest('.editable')){
       var closeKey = closeNode.getAttribute('data-codex-close')
       var closeRow = findCodexRow(closeKey)
-      if (closeRow) toggleCodexRow(closeRow)
+      /* reveal：从详情里收起时把那一行带回视口，不然用户不知道自己被带到哪了 */
+      if (closeRow) toggleCodexRow(closeRow, true)
       else { state.codexOpen = null; renderCodex() }
       return
     }
@@ -1346,7 +1347,14 @@ const JS = String.raw`
     else window.scrollTo(0, window.scrollY + delta)
   }
 
-  function toggleCodexRow(node){
+  /**
+   * 展开/收起一行。
+   *
+   * reveal=true 用于「从详情里点收起」：那时主行可能已经滚到视口外（详情自己是个
+   * 滚动框，用户在里面翻到一半就点收起），按"保持主行原位"补偿只会把列表甩到一个
+   * 用户不认识的位置。这种情况改成把那一行带进视口——他知道自己收的是哪一行。
+   */
+  function toggleCodexRow(node, reveal){
     var key = node.getAttribute('data-codex')
     if (key === null) return
     var mainRow = findCodexRow(key)
@@ -1364,10 +1372,16 @@ const JS = String.raw`
     state.codexOpen = next
     renderCodex()
     requestAnimationFrame(function(){
-      /* 补两次：第一次修主位移，第二次收掉布局在该帧之后才定型的残余 */
-      scrollBack(findCodexRow(key), anchorTop)
-      requestAnimationFrame(function(){
+      if (reveal){
+        var shown = findCodexRow(key)
+        /* 最小移动：行在视口外才滚，滚到刚好进来 */
+        if (shown && shown.scrollIntoView) shown.scrollIntoView({ block: 'nearest' })
+      } else {
+        /* 补两次：第一次修主位移，第二次收掉布局在该帧之后才定型的残余 */
         scrollBack(findCodexRow(key), anchorTop)
+      }
+      requestAnimationFrame(function(){
+        if (!reveal) scrollBack(findCodexRow(key), anchorTop)
         root.style.overflowAnchor = previousAnchor
       })
     })
@@ -1623,7 +1637,7 @@ const JS = String.raw`
    * 补偿量里会混进行高差（图鉴那边实测关闭时被顶走 56~169px 就是这么来的）。
    * 开和关都要补——之前只在展开时补，收起那一半漏了。
    */
-  function renderDetailKeeping(row){
+  function renderDetailKeeping(row, reveal){
     var anchorTop = row ? row.getBoundingClientRect().top : null
     var key = row ? row.getAttribute('data-ja') : null
     var root = document.documentElement
@@ -1637,7 +1651,11 @@ const JS = String.raw`
     renderList(); renderTable(); renderDetail()
     if (anchorTop === null || key === null){ root.style.overflowAnchor = previousAnchor; return }
     requestAnimationFrame(function(){
-      scrollBack(findSkillRow(key), anchorTop)
+      var fresh = findSkillRow(key)
+      /* reveal：从详表里点收起时，那一行可能已在视口外，带回来（最小移动），
+         而不是按"保持原位"补偿——那样会把列表甩到用户不认识的地方 */
+      if (reveal && fresh && fresh.scrollIntoView) fresh.scrollIntoView({ block: 'nearest' })
+      else scrollBack(fresh, anchorTop)
       root.style.overflowAnchor = previousAnchor
     })
   }
@@ -1971,7 +1989,8 @@ const JS = String.raw`
       var closingRow = findSkillRow(state.selected === null ? null : state.selected.ja)
       state.selected = null
       state.editing = null
-      if (closingRow) renderDetailKeeping(closingRow)
+      /* reveal：从详表里收起时把那一行带回视口 */
+      if (closingRow) renderDetailKeeping(closingRow, true)
       else { renderList(); renderTable(); renderDetail() }
       return
     }

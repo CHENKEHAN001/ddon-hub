@@ -142,6 +142,17 @@ td.note:hover{background:var(--panel2);color:var(--fg)}
 .pending{display:inline-block;padding:0 5px;border-radius:5px;font-size:10.5px;background:rgba(127,127,127,.16);color:var(--dim);cursor:text}
 .detail{margin-top:10px;border:1px solid var(--line);border-radius:12px;background:var(--panel);padding:12px 14px}
 .detailHead{display:flex;align-items:center;gap:10px;margin-bottom:8px}
+/*
+ * 详情自带滚动框，标题吸在它顶部。
+ *
+ * 以前详情直接撑开表格行（骷髏騎士 173 个地点 = 六七千像素），滚一次要穿过十几个
+ * 屏幕，滚到中间标题早没了、满屏掉落数据却不知道是谁的。
+ * 试过让标题吸在表头下面，但 sticky 元素在 <td> 里包含块不按预期算，滚深了就失效；
+ * 所以改成详情自己限高、自己滚，标题吸自己的顶。
+ * 名字用 detailTitle：detailHead 在这个页面已经被旧样式占用了。
+ */
+.detail{max-height:62vh;overflow:auto;scrollbar-width:thin}
+.detailTitle{position:sticky;top:0;z-index:2;background:var(--panel);padding:6px 0;border-bottom:1px solid var(--line)}
 .detailGrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:8px 18px}
 .kv{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:2px 10px;font-size:11.5px;align-items:start}
 .kvKey{color:var(--dim);white-space:nowrap}
@@ -579,7 +590,7 @@ const JS = `
     for (var i = 0; i < list.length; i++) if (list[i].id === id){ entry = list[i]; break }
     if (entry === null) return ''
 
-    var html = '<div class="detail"><div class="detailGrid"><div class="kv"><span class="kvKey">' + (isMonster ? '怪物' : '地点') + '</span><span class="kvVal">'
+    var html = '<div class="detail"><div class="detailGrid detailTitle"><div class="kv"><span class="kvKey">' + (isMonster ? '怪物' : '地点') + '</span><span class="kvVal">'
     html += esc(isMonster ? codexName(codex.monsters, id, id) : codexName(codex.stages, id, id))
     html += '　<span class="tag">' + esc(entry.row.ja || '') + '</span>'
     html += '<span class="tag">' + String(entry.rows.length) + ' 个地点</span></span></div>'
@@ -654,7 +665,8 @@ const JS = `
     var closeNode = target.closest('[data-codex-close]')
     if (closeNode){
       var closeKey = closeNode.getAttribute('data-codex-close')
-      if (state.codexOpen === closeKey) toggleCodexRow(closeKey)
+      /* reveal：从详情里收起时把那一行带回视口 */
+      if (state.codexOpen === closeKey) toggleCodexRow(closeKey, true)
       return
     }
     var rowNode = target.closest('tbody tr')
@@ -672,7 +684,14 @@ const JS = `
    * "点一下跳到下面"；页面本身并没有被滚走。补偿时要先关掉浏览器的滚动锚定，
    * 否则它会在 innerHTML 重建时自己改滚动位置，跟补偿打架。
    */
-  function toggleCodexRow(key){
+  /**
+   * 展开/收起一行。
+   *
+   * reveal=true 用于「从详情里点收起」：那时主行可能已经滚到视口外（详情自己是个
+   * 滚动框，用户在里面翻到一半就点收起），按"保持主行原位"补偿只会把列表甩到一个
+   * 用户不认识的位置。这种情况改成把那一行带进视口。
+   */
+  function toggleCodexRow(key, reveal){
     var mainRow = findCodexRow(key)
     if (!mainRow) return
     /*
@@ -689,10 +708,16 @@ const JS = `
     state.codexOpen = next
     renderCodex()
     requestAnimationFrame(function(){
-      /* 补两次：第一次修主位移，第二次收掉布局在该帧之后才定型的残余 */
-      scrollBack(findCodexRow(key), anchorTop)
-      requestAnimationFrame(function(){
+      if (reveal){
+        var shown = findCodexRow(key)
+        /* 最小移动：行在视口外才滚，滚到刚好进来 */
+        if (shown && shown.scrollIntoView) shown.scrollIntoView({ block: 'nearest' })
+      } else {
+        /* 补两次：第一次修主位移，第二次收掉布局在该帧之后才定型的残余 */
         scrollBack(findCodexRow(key), anchorTop)
+      }
+      requestAnimationFrame(function(){
+        if (!reveal) scrollBack(findCodexRow(key), anchorTop)
         root.style.overflowAnchor = previousAnchor
       })
     })
@@ -1079,8 +1104,6 @@ const JS = `
     var detailNode = target.closest ? target.closest('[data-skill-close]') : null
     if (detailNode && !target.closest('.kvVal.editable') && !target.closest('[data-cell]')){
       var keepJa = state.selected === null ? null : state.selected.ja
-      var keepRow = findSkillRow(keepJa)
-      var keepTop = keepRow ? keepRow.getBoundingClientRect().top : null
       state.selected = null
       state.editing = null
       var rootD = document.documentElement
@@ -1088,7 +1111,9 @@ const JS = `
       rootD.style.overflowAnchor = 'none'
       renderTable(); renderDetail()
       requestAnimationFrame(function(){
-        scrollBack(findSkillRow(keepJa), keepTop)
+        /* reveal：详表里点收起时，主行可能已在视口外，带回来（最小移动） */
+        var fresh = findSkillRow(keepJa)
+        if (fresh && fresh.scrollIntoView) fresh.scrollIntoView({ block: 'nearest' })
         rootD.style.overflowAnchor = anchorD
       })
       return
