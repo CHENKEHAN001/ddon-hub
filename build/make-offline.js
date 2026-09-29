@@ -578,10 +578,12 @@ const JS = String.raw`
               var own = owners[oi]
               var stageRow = codex.stages ? codex.stages[own.s] : null
               var stage = codexName(codex.stages, own.s, '')
-              /* 有些区域是开发期的占位名（st0027 テスト部屋 之类），拿它当「店铺在哪」
-                 只会更糊涂——这种情况用英文名，它指向真正的地标。 */
-              if (/テスト|测试|Test Room|st\d{4}/i.test(stage)){
-                stage = (stageRow && stageRow.en) || stage
+              /*
+               * 字典里的中文优先（生成器已把开发占位区域换成「正式区域名（開發區）」）；
+               * 只有中文缺失、或中文本身就是 st0027 テスト部屋 那种占位名时，才退回英文。
+               */
+              if (!stage || /テスト|测试房|Test Room|^st\d{4}/i.test(stage)){
+                stage = (stageRow && (stageRow.zh || stageRow.en)) || stage
               }
               if (!stage || /^\d+$/.test(stage)) continue
               var label = stage + '·' + own.npc
