@@ -178,6 +178,11 @@ input{min-height:34px;padding:6px 10px}
 }
 .jobs{gap:6px;margin:8px 0}
 .job{padding:6px 13px;font-size:13.5px;min-height:32px;display:inline-flex;align-items:center}
+/* 技能详情内联在行下面（和图鉴一致）：它不是可点行，别再给手型和悬停底色 */
+.skillDetailRow{cursor:default}
+.skillDetailRow:hover{background:transparent}
+.skillDetailRow>td{padding:0 0 10px;border-top:0}
+.skillDetailBody{border:1px solid var(--line);border-radius:10px;padding:10px 12px;background:var(--panel)}
 .toolbar{gap:6px}
 /* 技能列表改成卡片：五列表格在手机上没法看，横向滚动更没法用 */
 .skill{border:1px solid var(--line);border-radius:10px;padding:9px 11px;margin-bottom:7px;background:var(--panel);cursor:pointer}
@@ -1386,6 +1391,8 @@ const JS = String.raw`
       html += '</div>'
       if (note !== '') html += '<div class="skillNote">' + note + '</div>'
       if ((r.note || '') !== '') html += '<div class="noteHint">点这里可改备注</div>'
+      /* 详情内联在这张卡片里，不再写到页面底部（和图鉴一个做法） */
+      if (isOpen) html += detailHtml()
       html += '</div>'
     }
     el('skills').innerHTML = rows.length === 0 ? '<div class="empty">没有匹配的技能</div>' : html
@@ -1425,6 +1432,8 @@ const JS = String.raw`
       html += '<td class="num">' + esc(r.dps || '—') + '</td>'
       html += '<td class="skillNote">' + noteHtml(r) + '</td>'
       html += '</tr>'
+      /* 详情紧跟在那一行下面（和图鉴一样），不跳到页面底部 */
+      if (isOpen) html += '<tr class="skillDetailRow"><td colspan="5">' + detailHtml() + '</td></tr>'
     }
     html += '</tbody></table>'
     host.innerHTML = rows.length === 0 ? '<div class="empty">没有匹配的技能</div>' : html
@@ -1452,10 +1461,17 @@ const JS = String.raw`
     return html
   }
 
-  function renderDetail(){
-    if (state.selected === null){ el('detail').innerHTML = ''; return }
+  /**
+   * 技能详情的 HTML。
+   *
+   * 只生成字符串、不写 DOM：详情现在内联在技能行（或卡片）下面，由 renderTable /
+   * renderSkills 插进去——和图鉴一致。以前它是写到页面底部的 #detail 面板，点一下
+   * 那一行会被撑下去，看起来像"跳到下面"。
+   */
+  function detailHtml(){
+    if (state.selected === null) return ''
     var job = currentJob()
-    if (job === null){ el('detail').innerHTML = ''; return }
+    if (job === null) return ''
     var names = [state.selected.ja, state.selected.zh]
     var rows = (job.details || []).filter(function(d){ return names.indexOf(d.ja) >= 0 || names.indexOf(d.zh) >= 0 })
     if (rows.length === 0){
@@ -1465,8 +1481,7 @@ const JS = String.raw`
         return base !== '' && (l.indexOf(base) === 0 || r.indexOf(base) === 0)
       })
     }
-    var html = '<div class="detailHead"><b>' + esc(state.selected.zh || state.selected.ja) + '</b>'
-    html += '<span class="spacer" style="flex:1 1 auto"></span><button id="closeDetail">收起</button></div>'
+    var html = '<div class="skillDetailBody">'
     html += '<div class="detailGrid">'
     if (rows.length === 0){
       html += '<div class="empty">这个技能没有独立详表（只有汇总行）。</div>'
@@ -1475,11 +1490,14 @@ const JS = String.raw`
         html += blockHtml(rows[i].cells || []) + blockHtml(rows[i].attributes || []) + blockHtml(rows[i].detail || [])
       }
     }
-    html += '</div>'
-    el('detail').innerHTML = html
-    /* 这里不再 scrollIntoView：技能详表在页面下方，展开那一行的动作本身已经把它
-       撑开了，再强行滚过去就是"点一下跳到下面"——图鉴那边是同一个毛病。
-       展开时用 keepViewportAround 把被点的行钉在原位。 */
+    html += '</div></div>'
+    return html
+  }
+
+  function renderDetail(){
+    /* 详情已内联到技能行下面，页面底部不再有独立面板；这里只负责清掉旧内容 */
+    var host = el('detail')
+    if (host) host.innerHTML = ''
   }
 
   /**

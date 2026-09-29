@@ -112,6 +112,11 @@ h2{margin:22px 0 8px;font-size:14px;font-weight:600;color:var(--dim)}
 /* 详情行是被展开的那一行的附属内容，不是可点行；鼠标样式必须盖掉 tbody tr 的 */
 .codexDetailRow{cursor:default}
 .codexDetailRow:hover{background:transparent}
+/* 技能详情内联在行下面（和图鉴一致）：不是可点行，别给手型和悬停底色 */
+.skillDetailRow{cursor:default}
+.skillDetailRow:hover{background:transparent}
+.skillDetailRow>td{padding:0 0 10px;border-top:0}
+.skillDetailBody{border:1px solid var(--line);border-radius:10px;padding:10px 12px;background:var(--panel)}
 /* 地点与掉落左右对齐：每个地点一行，右边是该地点的掉落；窄屏自动变上下两行 */
 .dropTable{display:flex;flex-direction:column;gap:4px;margin-top:2px}
 .dropRow{display:grid;grid-template-columns:minmax(160px,220px) 1fr;gap:2px 12px;padding:4px 0;border-top:1px solid var(--line)}
@@ -765,6 +770,8 @@ const JS = `
       html += '<td class="num">' + esc(row.dps) + '</td>'
       html += '<td class="note" data-note="' + esc(row.note) + '">' + (pending ? '<span class="pending" title="还没有中文，点一下直接填">待译</span>' : esc(shown)) + (row.noteEdited ? ' <span class="tag ok">改</span>' : '') + '</td>'
       html += '</tr>'
+      /* 详情紧跟在那一行下面（和图鉴一样），不再写到页面底部 */
+      if (selected) html += '<tr class="skillDetailRow"><td colspan="5">' + detailHtml() + '</td></tr>'
     }
     html += '</tbody></table>'
     el('tableWrap').innerHTML = rows.length === 0 ? '<div class="empty">没有匹配的技能</div>' : html
@@ -792,10 +799,17 @@ const JS = `
     return html + '</div>'
   }
 
-  function renderDetail(){
-    if (state.selected === null){ el('detail').innerHTML = ''; return }
+  /**
+   * 技能详情的 HTML（只生成字符串）。
+   *
+   * 详情内联在技能行/卡片下面，由 renderTable / renderSkills 插进去——和图鉴一致。
+   * 以前是写到页面底部的 #detail 面板，点一行会把它撑开、下面的内容跟着下移，
+   * 看起来像"点一下跳到下面"。
+   */
+  function detailHtml(){
+    if (state.selected === null) return ''
     var job = currentJob()
-    if (job === null){ el('detail').innerHTML = ''; return }
+    if (job === null) return ''
     var names = [state.selected.ja, state.selected.zh]
     var rows = (job.details || []).filter(function(row){
       return names.indexOf(row.ja) >= 0 || names.indexOf(row.zh) >= 0
@@ -808,8 +822,7 @@ const JS = `
         return base !== '' && (left.indexOf(base) === 0 || right.indexOf(base) === 0)
       })
     }
-    var html = '<div class="detailHead"><b>' + esc(state.selected.zh === '' ? state.selected.ja : state.selected.zh + '　' + state.selected.ja) + '</b>'
-    html += '<span class="spacer" style="flex:1 1 auto"></span><button id="closeDetail">收起</button></div>'
+    var html = '<div class="skillDetailBody">'
     if (rows.length === 0){
       html += '<div class="empty">这个技能在 wiki 上没有独立详表（只有汇总行）。</div>'
     } else {
@@ -822,7 +835,14 @@ const JS = `
         html += '</div>'
       }
     }
-    el('detail').innerHTML = html
+    html += '</div>'
+    return html
+  }
+
+  function renderDetail(){
+    /* 详情已内联到技能行下面，页面底部不再有独立面板 */
+    var host = el('detail')
+    if (host) host.innerHTML = ''
   }
 
   /**
