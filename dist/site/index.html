@@ -165,6 +165,29 @@ input{min-height:34px;padding:6px 10px}
 .codexDetailRow .detail,.skillDetailBody{cursor:pointer}
 .codexDetailRow .detail .editable,.codexDetailRow .detail [data-cell],
 .skillDetailBody .editable,.skillDetailBody [data-cell]{cursor:text}
+/*
+ * 详情自带滚动框，标题吸在它顶部。
+ *
+ * 以前详情直接撑开表格行：骷髏騎士 173 个地点 = 6721px，是滚动框的十几倍，滚一次要
+ * 穿过十几个屏幕，滚到中间标题早没了、满屏掉落数据却不知道是谁的。
+ * 试过让标题吸在表头下面（top:33px），但 sticky 元素在 <td> 里包含块不按预期算，
+ * 滚深了就失效；所以改成详情自己限高、自己滚，标题吸自己的顶。
+ */
+@media (min-width:900px){
+  .codexDetailRow .detail{
+    max-height:62vh;
+    overflow:auto;
+    scrollbar-width:thin;
+  }
+  .codexDetailRow .detailHead{
+    position:sticky;
+    top:0;
+    z-index:2;
+    background:var(--panel);
+    padding:6px 0;
+    border-bottom:1px solid var(--line);
+  }
+}
 .toolbar{gap:6px}
 /* 技能列表改成卡片：五列表格在手机上没法看，横向滚动更没法用 */
 .skill{border:1px solid var(--line);border-radius:10px;padding:9px 11px;margin-bottom:7px;background:var(--panel);cursor:pointer}
@@ -1192,7 +1215,12 @@ a.chip:hover{border-color:var(--dim);color:var(--fg)}
      * 不用再滚回原来那一行。这里不用按钮：点哪儿都算，和点原行收起是一回事。
      */
     var html = '<div class="detail" data-codex-close="' + esc(key) + '">'
-    html += '<div class="detailGrid">'
+    /*
+     * 这一格是「怪物 X · N 个地点」，给它 detailHead 让它吸在表头下面。
+     * 详情可能有几百行（骷髏騎士 173 个地点），滚到中间时标题早就滚走了，
+     * 光看掉落数据根本不知道这是谁的详情。
+     */
+    html += '<div class="detailGrid detailHead">'
     html += '<div class="kv"><span class="kvKey">' + (isMonster ? '怪物' : '地点') + '</span><span class="kvVal">'
     html += esc(isMonster ? codexName(codex.monsters, id, id) : codexName(codex.stages, id, id))
     html += ' <span class="tag">' + esc(entry.row.ja || '') + '</span>'
