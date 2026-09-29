@@ -577,14 +577,9 @@ const JS = String.raw`
             for (var oi = 0; oi < owners.length; oi++){
               var own = owners[oi]
               var stageRow = codex.stages ? codex.stages[own.s] : null
-              var stage = codexName(codex.stages, own.s, '')
-              /*
-               * 字典里的中文优先（生成器已把开发占位区域换成「正式区域名（開發區）」）；
-               * 只有中文缺失、或中文本身就是 st0027 テスト部屋 那种占位名时，才退回英文。
-               */
-              if (!stage || /テスト|测试房|Test Room|^st\d{4}/i.test(stage)){
-                stage = (stageRow && (stageRow.zh || stageRow.en)) || stage
-              }
+              /* 字典里的中文就是正式区域名（开发期房间名已由生成器换掉），没有才退回英文 */
+              var stage = (stageRow && (stageRow.zh || stageRow.en)) ||
+                          codexName(codex.stages, own.s, '')
               if (!stage || /^\d+$/.test(stage)) continue
               var label = stage + '·' + own.npc
               if (seenPlace[label]) continue
