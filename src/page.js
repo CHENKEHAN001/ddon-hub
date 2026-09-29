@@ -560,7 +560,8 @@ const JS = `
   function codexDetailRows(key){
     var body = codexDetailHtml(key)
     if (body === '') return ''
-    return '<tr class="codexDetailRow"><td colspan="6">' + body + '</td></tr>'
+    /* 整个详情行可点 = 收起（详情可能很长，不用滚回原行） */
+    return '<tr class="codexDetailRow" data-codex-close="' + esc(key) + '"><td colspan="6">' + body + '</td></tr>'
   }
 
   function codexDetailHtml(key){
@@ -649,6 +650,13 @@ const JS = `
       renderCodexTabs(); renderCodex()
       return
     }
+    /* 点详情区域 = 收起（整个详情行都挂着标记，不用按钮） */
+    var closeNode = target.closest('[data-codex-close]')
+    if (closeNode){
+      var closeKey = closeNode.getAttribute('data-codex-close')
+      if (state.codexOpen === closeKey) toggleCodexRow(closeKey)
+      return
+    }
     var rowNode = target.closest('tbody tr')
     if (rowNode){
       var key = rowNode.getAttribute('data-codex')
@@ -681,17 +689,10 @@ const JS = `
     state.codexOpen = next
     renderCodex()
     requestAnimationFrame(function(){
-      var fresh = findCodexRow(key)
-      if (fresh){
-        var delta = fresh.getBoundingClientRect().top - anchorTop
-        if (Math.abs(delta) > 1) window.scrollTo(0, window.scrollY + delta)
-      }
+      /* 补两次：第一次修主位移，第二次收掉布局在该帧之后才定型的残余 */
+      scrollBack(findCodexRow(key), anchorTop)
       requestAnimationFrame(function(){
-        var again = findCodexRow(key)
-        if (again){
-          var rest = again.getBoundingClientRect().top - anchorTop
-          if (Math.abs(rest) > 1) window.scrollTo(0, window.scrollY + rest)
-        }
+        scrollBack(findCodexRow(key), anchorTop)
         root.style.overflowAnchor = previousAnchor
       })
     })
@@ -822,7 +823,8 @@ const JS = `
         return base !== '' && (left.indexOf(base) === 0 || right.indexOf(base) === 0)
       })
     }
-    var html = '<div class="skillDetailBody">'
+    /* 整个详情块就是收起目标（点哪儿都算，不用按钮） */
+    var html = '<div class="skillDetailBody" data-skill-close="1">'
     if (rows.length === 0){
       html += '<div class="empty">这个技能在 wiki 上没有独立详表（只有汇总行）。</div>'
     } else {
@@ -846,24 +848,43 @@ const JS = `
   }
 
   /**
-   * 渲染技能详表，同时保持视口位置：详表在页面底部，展开/收起会把它下面的内容
-   * 推走或拉回，看起来就是"页面自己跳了一下"。截图里点技能行时的跳动就来自这里。
-   * （图鉴那边是同源问题，用 toggleCodexRow 的补偿解决。）
+   * 某个元素所在的内滚动框（没有就返回 null）。
+   *
+   * 内容变高变矮时被撑动的是框，不是页面——补偿要作用在框上。
    */
-  function renderDetailKeeping(){
-    var anchor = el('detail').getBoundingClientRect().bottom
-    var root = document.documentElement
-    var previousAnchor = root.style.overflowAnchor
-    root.style.overflowAnchor = 'none'
-    renderDetail()
-    requestAnimationFrame(function(){
-      var node = el('detail')
-      if (node){
-        var delta = node.getBoundingClientRect().bottom - anchor
-        if (Math.abs(delta) > 1) window.scrollTo(0, window.scrollY + delta)
-      }
-      root.style.overflowAnchor = previousAnchor
-    })
+  function scrollBoxOf(node){
+    var p = node ? node.parentElement : null
+    while (p && p !== document.body && p !== document.documentElement){
+      var cs = getComputedStyle(p)
+      if (/(auto|scroll)/.test(cs.overflowY) && p.scrollHeight > p.clientHeight + 1) return p
+      p = p.parentElement
+    }
+    return null
+  }
+
+  /**
+   * 把元素滚回它原来的视口位置（补偿它上方内容的高度变化）。
+   *
+   * 关键是找对滚动对象：行在滚动框里时要调框的 scrollTop，一律调 window 只会把
+   * 整页推走、框内的位移一点没抵消（表现就是"展开一个再点另一个被顶上去"）。
+   */
+  function scrollBack(node, anchorTop){
+    if (!node || anchorTop === null || anchorTop === undefined) return
+    var delta = node.getBoundingClientRect().top - anchorTop
+    if (Math.abs(delta) <= 1) return
+    var box = scrollBoxOf(node)
+    if (box) box.scrollTop += delta
+    else window.scrollTo(0, window.scrollY + delta)
+  }
+
+  /** 找出某一技能当前对应的表格行（详情行没有 data-ja，不会被选中）。 */
+  function findSkillRow(ja){
+    if (ja === null || ja === undefined) return null
+    var rows = document.querySelectorAll('#skillsTable tbody tr[data-ja]')
+    for (var i = 0; i < rows.length; i++){
+      if (rows[i].getAttribute('data-ja') === ja) return rows[i]
+    }
+    return null
   }
 
   function renderLive(){
@@ -1049,7 +1070,29 @@ const JS = `
       renderTable()
       return
     }
-    if (target.id === 'closeDetail'){ state.selected = null; renderDetail(); renderTable(); return }
+    /*
+     * 点技能详表任意位置 = 收起。
+     *
+     * 详表内联在那一行下面，可能比视口还高——滚到底想关掉时不该再滚回原行去点它。
+     * 所以整块详表都是收起目标（不用按钮）；里面的可编辑值除外，点它是想改中文。
+     */
+    var detailNode = target.closest ? target.closest('[data-skill-close]') : null
+    if (detailNode && !target.closest('.kvVal.editable') && !target.closest('[data-cell]')){
+      var keepJa = state.selected === null ? null : state.selected.ja
+      var keepRow = findSkillRow(keepJa)
+      var keepTop = keepRow ? keepRow.getBoundingClientRect().top : null
+      state.selected = null
+      state.editing = null
+      var rootD = document.documentElement
+      var anchorD = rootD.style.overflowAnchor
+      rootD.style.overflowAnchor = 'none'
+      renderTable(); renderDetail()
+      requestAnimationFrame(function(){
+        scrollBack(findSkillRow(keepJa), keepTop)
+        rootD.style.overflowAnchor = anchorD
+      })
+      return
+    }
 
     var noteCell = target.closest ? target.closest('td.note') : null
     if (noteCell){
@@ -1080,16 +1123,16 @@ const JS = `
       return
     }
 
-    var rowNode = target.closest ? target.closest('tbody tr') : null
+    /* 只认带 data-ja 的技能行：详情行同样是 tbody tr，别把它当成技能行来切换 */
+    var rowNode = target.closest ? target.closest('#skillsTable tbody tr[data-ja]') : null
     if (rowNode){
       var ja = rowNode.getAttribute('data-ja')
       var zh = rowNode.getAttribute('data-zh')
       var closing = state.selected !== null && state.selected.ja === ja && state.selected.zh === zh
       state.selected = closing ? null : { ja: ja, zh: zh }
       /*
-       * 详表撑在页面底部，展开/收起都会让这一行相对视口移动，看起来就是"点一下跳到
-       * 下面"。所以记下这一行变化前的位置，下一帧补回来；不再 scrollIntoView。
-       * 锚点用 top（bottom 会随详表高度变，补偿量里混进行高差）；开和关都要补。
+       * 详表在这一行下面撑开/收起，会让这一行相对视口滑动，所以要把它钉回原位。
+       * 锚点用 top（bottom 会随行高变，补偿量里会混进行高差）；开和关都要补。
        * 补偿期间关掉滚动锚定，否则它会和补偿抢着改滚动位置。
        */
       var rowTop = rowNode.getBoundingClientRect().top
@@ -1098,15 +1141,7 @@ const JS = `
       root2.style.overflowAnchor = 'none'
       renderTable(); renderDetail()
       requestAnimationFrame(function(){
-        var fresh = null
-        var all = document.querySelectorAll('#skillsTable tbody tr')
-        for (var i = 0; i < all.length; i++){
-          if (all[i].getAttribute('data-ja') === ja && all[i].getAttribute('data-zh') === zh){ fresh = all[i]; break }
-        }
-        if (fresh){
-          var delta = fresh.getBoundingClientRect().top - rowTop
-          if (Math.abs(delta) > 1) window.scrollTo(0, window.scrollY + delta)
-        }
+        scrollBack(findSkillRow(ja), rowTop)
         root2.style.overflowAnchor = anchorBefore
       })
       return

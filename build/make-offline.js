@@ -178,11 +178,18 @@ input{min-height:34px;padding:6px 10px}
 }
 .jobs{gap:6px;margin:8px 0}
 .job{padding:6px 13px;font-size:13.5px;min-height:32px;display:inline-flex;align-items:center}
-/* 技能详情内联在行下面（和图鉴一致）：它不是可点行，别再给手型和悬停底色 */
+/* 技能详情内联在行下面（和图鉴一致）；这一行本身不是点击目标，可点的是里面的详情块 */
 .skillDetailRow{cursor:default}
 .skillDetailRow:hover{background:transparent}
 .skillDetailRow>td{padding:0 0 10px;border-top:0}
 .skillDetailBody{border:1px solid var(--line);border-radius:10px;padding:10px 12px;background:var(--panel)}
+/*
+ * 详情区域整体可点 = 收起（不用按钮）。
+ * 里面的可编辑值要排除掉，否则点它想改中文会变成把详情关掉。
+ */
+.codexDetailRow .detail,.skillDetailBody{cursor:pointer}
+.codexDetailRow .detail .editable,.codexDetailRow .detail [data-cell],
+.skillDetailBody .editable,.skillDetailBody [data-cell]{cursor:text}
 .toolbar{gap:6px}
 /* 技能列表改成卡片：五列表格在手机上没法看，横向滚动更没法用 */
 .skill{border:1px solid var(--line);border-radius:10px;padding:9px 11px;margin-bottom:7px;background:var(--panel);cursor:pointer}
@@ -1035,7 +1042,8 @@ const JS = String.raw`
       table += '<td class="codexPlaces">' + esc(first) + '</td>'
       table += '</tr>'
       if (open){
-        table += '<tr class="codexDetailRow"><td colspan="5">' + itemSourcesHtml(entry) + '</td></tr>'
+        table += '<tr class="codexDetailRow" data-codex-close="item:' + esc(entry.id) +
+                 '"><td colspan="5">' + itemSourcesHtml(entry) + '</td></tr>'
       }
     }
     table += '</tbody></table>'
@@ -1125,7 +1133,8 @@ const JS = String.raw`
         table += '</tr>'
         /* 详情紧跟在那一行下面，不跳到页面别处 */
         if (isOpen){
-          table += '<tr class="codexDetailRow"><td colspan="6">' + codexDetailHtml(state.codexView + ':' + item.id) + '</td></tr>'
+          table += '<tr class="codexDetailRow" data-codex-close="' + esc(state.codexView + ':' + item.id) +
+                   '"><td colspan="6">' + codexDetailHtml(state.codexView + ':' + item.id) + '</td></tr>'
         }
       }
       table += '</tbody></table>'
@@ -1151,7 +1160,13 @@ const JS = String.raw`
     for (var i = 0; i < list.length; i++) if (list[i].id === id){ entry = list[i]; break }
     if (entry === null) return ''
 
-    var html = '<div class="detail">'
+    /*
+     * 整个详情区域都是"收起"的点击目标（data-codex-close 挂在这一层）。
+     *
+     * 详情可能比滚动框还高（骷髏騎士 173 个地点），滚到哪都能随手一点就关掉，
+     * 不用再滚回原来那一行。这里不用按钮：点哪儿都算，和点原行收起是一回事。
+     */
+    var html = '<div class="detail" data-codex-close="' + esc(key) + '">'
     html += '<div class="detailGrid">'
     html += '<div class="kv"><span class="kvKey">' + (isMonster ? '怪物' : '地点') + '</span><span class="kvVal">'
     html += esc(isMonster ? codexName(codex.monsters, id, id) : codexName(codex.stages, id, id))
@@ -1187,6 +1202,18 @@ const JS = String.raw`
   function onCodexClick(event){
     var target = event.target
     if (!target || !target.closest) return
+    /*
+     * 点详情区域 = 收起（整个详情块都挂 data-codex-close）。
+     * 详情里的可编辑值除外——点它是想改中文，不该把详情关掉。
+     */
+    var closeNode = target.closest('[data-codex-close]')
+    if (closeNode && !target.closest('[data-cell]') && !target.closest('.editable')){
+      var closeKey = closeNode.getAttribute('data-codex-close')
+      var closeRow = findCodexRow(closeKey)
+      if (closeRow) toggleCodexRow(closeRow)
+      else { state.codexOpen = null; renderCodex() }
+      return
+    }
     var viewNode = target.closest('[data-view]')
     if (viewNode){
       state.codexView = viewNode.getAttribute('data-view')
@@ -1259,6 +1286,38 @@ const JS = String.raw`
    *      实测请求 -495 却只移动了一部分还被反向拉。所以先临时关掉 overflow-anchor，
    *      再用 scrollTo 精确落位。
    */
+  /**
+   * 某个元素所在的内滚动框（没有就返回 null）。
+   *
+   * 图鉴与技能的列表现在是 overflow:auto 的滚动框，所以"内容变高变矮"时被撑动的
+   * 是框，不是页面。
+   */
+  function scrollBoxOf(node){
+    var p = node ? node.parentElement : null
+    while (p && p !== document.body && p !== document.documentElement){
+      var cs = getComputedStyle(p)
+      if (/(auto|scroll)/.test(cs.overflowY) && p.scrollHeight > p.clientHeight + 1) return p
+      p = p.parentElement
+    }
+    return null
+  }
+
+  /**
+   * 把元素滚回它原来的视口位置（补偿它上方内容的高度变化）。
+   *
+   * 关键是找对滚动对象：行在滚动框里时要调**框的 scrollTop**。早先这里一律调
+   * window.scrollTo，框内的位移根本没被抵消，反而把整页推走——表现就是"展开一个
+   * 再点另一个，页面被顶上去"。
+   */
+  function scrollBack(node, anchorTop){
+    if (!node || anchorTop === null || anchorTop === undefined) return
+    var delta = node.getBoundingClientRect().top - anchorTop
+    if (Math.abs(delta) <= 1) return
+    var box = scrollBoxOf(node)
+    if (box) box.scrollTop += delta
+    else window.scrollTo(0, window.scrollY + delta)
+  }
+
   function toggleCodexRow(node){
     var key = node.getAttribute('data-codex')
     if (key === null) return
@@ -1278,17 +1337,9 @@ const JS = String.raw`
     renderCodex()
     requestAnimationFrame(function(){
       /* 补两次：第一次修主位移，第二次收掉布局在该帧之后才定型的残余 */
-      var fresh = findCodexRow(key)
-      if (fresh){
-        var delta = fresh.getBoundingClientRect().top - anchorTop
-        if (Math.abs(delta) > 1) window.scrollTo(0, window.scrollY + delta)
-      }
+      scrollBack(findCodexRow(key), anchorTop)
       requestAnimationFrame(function(){
-        var again = findCodexRow(key)
-        if (again){
-          var rest = again.getBoundingClientRect().top - anchorTop
-          if (Math.abs(rest) > 1) window.scrollTo(0, window.scrollY + rest)
-        }
+        scrollBack(findCodexRow(key), anchorTop)
         root.style.overflowAnchor = previousAnchor
       })
     })
@@ -1495,8 +1546,8 @@ const JS = String.raw`
         return base !== '' && (l.indexOf(base) === 0 || r.indexOf(base) === 0)
       })
     }
-    var html = '<div class="skillDetailBody">'
-    html += '<div class="detailGrid">'
+    /* 整个详情区域就是收起目标（不用按钮，点哪儿都算） */
+    var html = '<div class="skillDetailBody" data-skill-close="1">'
     if (rows.length === 0){
       html += '<div class="empty">这个技能没有独立详表（只有汇总行）。</div>'
     } else {
@@ -1504,7 +1555,7 @@ const JS = String.raw`
         html += blockHtml(rows[i].cells || []) + blockHtml(rows[i].attributes || []) + blockHtml(rows[i].detail || [])
       }
     }
-    html += '</div></div>'
+    html += '</div>'
     return html
   }
 
@@ -1558,12 +1609,7 @@ const JS = String.raw`
     renderList(); renderTable(); renderDetail()
     if (anchorTop === null || key === null){ root.style.overflowAnchor = previousAnchor; return }
     requestAnimationFrame(function(){
-      var fresh = findSkillRow(key)
-      if (fresh){
-        var freshTop = fresh.getBoundingClientRect().top
-        var shift = freshTop - anchorTop
-        if (Math.abs(shift) > 1) window.scrollTo(0, window.scrollY + shift)
-      }
+      scrollBack(findSkillRow(key), anchorTop)
       root.style.overflowAnchor = previousAnchor
     })
   }
@@ -1888,6 +1934,21 @@ const JS = String.raw`
     if (state.editing !== null && !inEditor){ state.editing = null }
 
     /*
+     * 技能详表里的任意位置 = 收起。
+     *
+     * 详表内联在那一行下面，可能比滚动框还高——滚到底想关掉时，不该再要求用户滚回
+     * 原来的行去点它。所以整块详表都是收起目标（不用按钮）。里面的可编辑值除外。
+     */
+    if (t.closest && t.closest('[data-skill-close]') && !t.closest('[data-cell]') && !t.closest('.editable')){
+      var closingRow = findSkillRow(state.selected === null ? null : state.selected.ja)
+      state.selected = null
+      state.editing = null
+      if (closingRow) renderDetailKeeping(closingRow)
+      else { renderList(); renderTable(); renderDetail() }
+      return
+    }
+
+    /*
      * 职业标签和排序按钮都用 .job 这个类做样式。判断顺序很重要：
      * 排序按钮同样匹配 closest('.job')，所以必须先判排序——否则点排序会走到
      * 「切职业」那条分支里，列表看起来变了（其实换的是职业），排序和职业都不对。
@@ -1970,7 +2031,6 @@ const JS = String.raw`
       return
     }
   })
-
   document.addEventListener('input', function(event){
     if (event.target.id === 'search'){ state.query = event.target.value; renderList() }
   })
