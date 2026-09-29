@@ -138,6 +138,8 @@ input{min-height:34px;padding:6px 10px}
 .itemSourceList{display:flex;flex-wrap:wrap;gap:5px}
 .codexItemCard{cursor:pointer}
 .codexItemCard:hover{background:var(--panel)}
+.moreRow{display:flex;justify-content:center;padding:10px 0 2px}
+.moreRow button{padding:8px 16px;min-height:34px}
 @media (max-width:720px){
   .dropRow{grid-template-columns:1fr;gap:3px}
 }
@@ -307,7 +309,7 @@ a.chip:hover{border-color:var(--dim);color:var(--fg)}
   var KEY_NOTES = 'ddon-hub-notes-v1'
   var state = { job: boot.defaultJob, query: '', sort: 'dps', selected: null, hub: null, editing: null,
     codexView: 'monster', codexSort: 'spots', codexQuery: '', codexOpen: null, codexIndex: null,
-    codexServer: null, codexItemKind: 'all' }
+    codexServer: null, codexItemKind: 'all', codexItemLimit: 300 }
 
   function el(id){ return document.getElementById(id) }
   function esc(v){ return String(v === null || v === undefined ? '' : v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;') }
@@ -937,10 +939,28 @@ a.chip:hover{border-color:var(--dim);color:var(--fg)}
     var codex = codexData()
     var rows = codexRows()
     if (state.codexView === 'item'){
-      renderCodexItems(rows)
+      /*
+       * 物品有 1694 种，一次渲染全部在手机上会明显卡（每次按键都重建上千行），
+       * 所以和技能表一样分块：先给 300 条，要更多自己点。
+       */
+      var shown = rows.slice(0, state.codexItemLimit)
+      renderCodexItems(shown)
+      if (rows.length > shown.length){
+        var more = document.createElement('div')
+        more.className = 'moreRow'
+        more.innerHTML = '<button type="button" data-imore="1">显示更多（已列 ' +
+          shown.length + ' / ' + rows.length + '）</button>'
+        el('codexList').appendChild(more)
+      }
       var stats2 = codex.stats || {}
-      var allItems = codex.itemNames ? codexKeys(codex.itemNames).length : rows.length
-      if (el('codexMeta')) el('codexMeta').textContent = rows.length + ' 种物品 · ' + allItems + ' 种物品 · ' + (stats2.drops || 0) + ' 张掉落表 · ' + (stats2.spots || 0) + ' 条生成记录 · 译名来自汉化包'
+      /* 「共 N 种」要用来源数据的总数：itemNames 那份只有掉落表涉及的 429 种，
+         拿它当总数会把 1694 说成 429。 */
+      var allItems = (codex.itemSources && codex.itemSources.items)
+        ? codexKeys(codex.itemSources.items).length
+        : rows.length
+      if (el('codexMeta')) el('codexMeta').textContent =
+        '筛出 ' + rows.length + ' 种 / 有来源记录 ' + allItems + ' 种 · ' +
+        (stats2.drops || 0) + ' 张掉落表 · ' + (stats2.spots || 0) + ' 条生成记录 · 来源含掉落/采集/商店/兑换'
       return
     }
     var isMonster = state.codexView !== 'stage'
@@ -1086,6 +1106,13 @@ a.chip:hover{border-color:var(--dim);color:var(--fg)}
     if (kindNode){
       state.codexItemKind = kindNode.getAttribute('data-ikind')
       state.codexOpen = null
+      state.codexItemLimit = 300
+      renderCodex()
+      return
+    }
+    /* 物品视图的「显示更多」 */
+    if (target.closest('[data-imore]')){
+      state.codexItemLimit += 300
       renderCodex()
       return
     }
@@ -1166,6 +1193,8 @@ a.chip:hover{border-color:var(--dim);color:var(--fg)}
     var box = el('codexSearch')
     if (box) box.addEventListener('input', function(event){
       state.codexQuery = event.target.value
+      /* 换了搜索词就回到第一屏：否则上个词翻到 900 条，新词只剩 3 条会看着像空的 */
+      state.codexItemLimit = 300
       renderCodex()
     })
     var host = el('codexList')
