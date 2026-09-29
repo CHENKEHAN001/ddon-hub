@@ -67,6 +67,18 @@ const SERVERS_FILE = fs.existsSync(SERVERS_SOURCE)
   ? JSON.parse(fs.readFileSync(SERVERS_SOURCE, 'utf8'))
   : null
 
+/**
+ * 物品来源（掉落之外的采集/商店/兑换）。
+ *
+ * 掉落只是物品来源之一：Revival 的 datas 目录里还有 GatheringItem（采集）、
+ * Shop（普通商店）、SpecialShops（兑换）。三者加起来 gzip 约 30 KB，一并内联，
+ * 省掉异步加载的复杂度。
+ */
+const ITEM_SOURCES_SOURCE = path.join(ROOT, 'src', 'servers', 'item-sources.json')
+const ITEM_SOURCES = fs.existsSync(ITEM_SOURCES_SOURCE)
+  ? JSON.parse(fs.readFileSync(ITEM_SOURCES_SOURCE, 'utf8'))
+  : null
+
 const CODEX = (() => {
   if (SERVERS_FILE !== null) {
     const shared = {
@@ -89,7 +101,8 @@ const CODEX = (() => {
       }
     }
     const first = Object.keys(servers)[0]
-    return { ...shared, servers, defaultServer: first, ...servers[first] }
+    return { ...shared, servers, defaultServer: first, ...servers[first],
+             itemSources: ITEM_SOURCES }
   }
   /* 还没有多服务器数据时退回单份快照，保证老流程仍能构建 */
   const text = fs.readFileSync(MONSTERS_SOURCE, 'utf8')
@@ -125,7 +138,7 @@ input{min-height:34px;padding:6px 10px}
 /* 怪物图鉴：和技能表同一套卡片，手机上单列、宽屏切表格 */
 #codexSearch{width:100%!important;box-sizing:border-box;margin:6px 0}
 .codexCard{margin-bottom:7px}
-/* 「按掉落物」的卡片不可展开，所以不要手型光标（.skill 上有 cursor:pointer） */
+/* 物品卡片可以展开（看全部来源），保留手型光标 */
 .codexItemCard{cursor:default}
 .codexItemCard:hover{background:transparent}
 .codexPlaces{max-width:38ch;white-space:normal;line-height:1.5}
@@ -143,6 +156,14 @@ input{min-height:34px;padding:6px 10px}
 .codexServerLabel{color:var(--dim);font-size:12px;align-self:center}
 .codexServerSource{color:var(--dim);font-size:11.5px;align-self:center;word-break:break-word}
 #codexServers{border-bottom:1px solid var(--line);padding-bottom:7px}
+/* 物品来源：按类型分组，每条来源一个小胶囊 */
+.codexFilterLabel{color:var(--dim);font-size:12px;align-self:center;margin-left:6px}
+.itemSources{display:flex;flex-direction:column;gap:5px;margin-top:7px}
+.itemSourceGroup{display:grid;grid-template-columns:52px 1fr;gap:8px;align-items:start}
+.itemSourceKind{color:var(--dim);font-size:12px;padding-top:3px}
+.itemSourceList{display:flex;flex-wrap:wrap;gap:5px}
+.codexItemCard{cursor:pointer}
+.codexItemCard:hover{background:var(--panel)}
 @media (max-width:720px){
   .dropRow{grid-template-columns:1fr;gap:3px}
 }
@@ -263,7 +284,7 @@ const JS = String.raw`
   var KEY_NOTES = 'ddon-hub-notes-v1'
   var state = { job: boot.defaultJob, query: '', sort: 'dps', selected: null, hub: null, editing: null,
     codexView: 'monster', codexSort: 'spots', codexQuery: '', codexOpen: null, codexIndex: null,
-    codexServer: null }
+    codexServer: null, codexItemKind: 'all' }
 
   function el(id){ return document.getElementById(id) }
   function esc(v){ return String(v === null || v === undefined ? '' : v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;') }
@@ -389,6 +410,7 @@ const JS = String.raw`
       monsters: codex.monsters,
       stages: codex.stages,
       itemNames: codex.itemNames,
+      itemSources: codex.itemSources,
       label: pick.label,
       declaredIn: pick.declaredIn,
       source: pick.source,
@@ -489,11 +511,10 @@ const JS = String.raw`
     for (var b = 0; b < out.byStage.length; b++) collectItems(out.byStage[b])
 
     /*
-     * 「按掉落物」视图：一个掉落物一行，右边是掉落它的怪物/地点。
+     * 「按物品」视图：一个物品一行，来源**不止掉落**——还有采集、商店、兑换。
      *
-     * 掉落表是「一张表被多个生成点共用」的结构（骷髅骑士 36 个地点只对应 6 张表），
-     * 所以按表反查速度很快：先建立「掉落表 id -> 用到它的生成点」，再遍历掉落表
-     * 把每个物品挂到这些生成点上。直接逐个生成点展开会重复做同样的工作。
+     * 掉落表是「一张表被多个生成点共用」的结构，所以这里先建「掉落表 id -> 用到它的
+     * 生成点」再反查；采集/商店/兑换直接用文件里已经聚合好的来源条目。
      */
     var usersByTable = {}
     for (var c = 0; c < codex.spots.length; c++){
@@ -502,51 +523,80 @@ const JS = String.raw`
       var ids = sp.d || []
       for (var e = 0; e < ids.length; e++){
         if (!(ids[e] > 0)) continue
-        var bucket = usersByTable[ids[e]]
-        if (!bucket){ bucket = []; usersByTable[ids[e]] = bucket }
-        bucket.push(sp)
+        if (!usersByTable[ids[e]]) usersByTable[ids[e]] = []
+        usersByTable[ids[e]].push(sp)
       }
     }
-    var byItem = {}
-    for (var tid in codex.drops){
-      if (!Object.prototype.hasOwnProperty.call(codex.drops, tid)) continue
-      var table = codex.drops[tid]
-      var users = usersByTable[tid] || []
-      if (table.items.length === 0 || users.length === 0) continue
-      for (var f = 0; f < table.items.length; f++){
-        var item = table.items[f]
-        var iid = item[0]
-        var entry = byItem[iid]
-        if (!entry){
-          entry = { id: iid, row: codex.itemNames[iid] || {}, monsters: {}, stages: {}, n: 0, sources: [], chances: [] }
-          byItem[iid] = entry
+
+    /** 把「某个物品有哪些来源」转成可读文本（一行一条），供筛选与显示。 */
+    function buildItemEntries(){
+      var data = codex.itemSources
+      var list = []
+      if (!data || !data.items) return list
+      for (var iid in data.items){
+        if (!Object.prototype.hasOwnProperty.call(data.items, iid)) continue
+        var raw = data.items[iid]
+        var rec = { drop: [], gather: [], shop: [], exchange: [] }
+        for (var i = 0; i < raw.length; i++){
+          var src = raw[i]
+          if (src.k === 'drop') rec.drop.push(src)
+          else if (src.k === 'gather') rec.gather.push(src)
+          else if (src.k === 'shop') rec.shop.push(src)
+          else if (src.k === 'exchange') rec.exchange.push(src)
         }
-        entry.chances.push(item[3])
-        for (var g = 0; g < users.length; g++){
-          var use = users[g]
-          /* 同一个物品可能经由两张表落到同一个生成点（例如雷斯塔尼亞 的 116+270），
-             这种情况只记一次来源，但掉落率仍旧各记一遍。 */
-          var key = use.m + ':' + use.s
-          entry.monsters[use.m] = 1
-          entry.stages[use.s] = 1
-          entry.sources.push(key)
-          entry.n += 1
+        var lines = { drop: [], gather: [], shop: [], exchange: [] }
+        var mons = {}
+        for (var d = 0; d < rec.drop.length; d++){
+          var m = rec.drop[d]
+          mons[m.m] = (mons[m.m] || 0) + 1
         }
+        for (var mid in mons){
+          if (!Object.prototype.hasOwnProperty.call(mons, mid)) continue
+          lines.drop.push(codexName(codex.monsters, mid, mid) + '（' + mons[mid] + ' 个地点）')
+        }
+        for (var g2 = 0; g2 < rec.gather.length; g2++){
+          var ga = rec.gather[g2]
+          var qty = ga.q ? (ga.q[0] === ga.q[1] ? '×' + ga.q[0] : '×' + ga.q[0] + '-' + ga.q[1]) : ''
+          lines.gather.push(codexName(codex.stages, ga.s, ga.s) + ' ' + qty)
+        }
+        for (var s2 = 0; s2 < rec.shop.length; s2++){
+          var sh = rec.shop[s2]
+          lines.shop.push('商店 #' + sh.id + ' ' + (sh.p == null ? '' : sh.p + ' 金') +
+                          (sh.st ? '（库存 ' + sh.st + '）' : ''))
+        }
+        for (var x2 = 0; x2 < rec.exchange.length; x2++){
+          var ex = rec.exchange[x2]
+          var cost = []
+          for (var c2 = 0; c2 < (ex.cost || []).length; c2++){
+            cost.push(codexName(codex.itemNames, ex.cost[c2].id, ex.cost[c2].id) + '×' + ex.cost[c2].n)
+          }
+          lines.exchange.push('【' + (ex.t || '') + '】' + (ex.r || '') +
+                              (cost.length ? ' ← ' + cost.join(' + ') : ''))
+        }
+        var text = []
+        var kinds = []
+        for (var kk in lines){
+          if (!Object.prototype.hasOwnProperty.call(lines, kk)) continue
+          if (lines[kk].length === 0) continue
+          kinds.push(kk)
+          /* 搜索用的合并文本：物品名之外的来源地名/怪名也能搜到 */
+          for (var t2 = 0; t2 < lines[kk].length; t2++) text.push(lines[kk][t2])
+        }
+        var row = codex.itemNames[iid] || {}
+        list.push({
+          id: iid,
+          row: row,
+          kinds: kinds,
+          counts: { drop: rec.drop.length, gather: rec.gather.length,
+                    shop: rec.shop.length, exchange: rec.exchange.length },
+          lines: lines,
+          sourceCount: rec.drop.length + rec.gather.length + rec.shop.length + rec.exchange.length,
+          itemText: [row.zh || '', row.ja || '', row.en || ''].concat(text).join(' '),
+        })
       }
+      return list
     }
-    out.byItem = []
-    for (var iidKey in byItem){
-      if (!Object.prototype.hasOwnProperty.call(byItem, iidKey)) continue
-      var rowItem = byItem[iidKey]
-      /* 来源去重后计数：一个生成点算一个出处 */
-      var unique = {}
-      for (var h = 0; h < rowItem.sources.length; h++) unique[rowItem.sources[h]] = 1
-      rowItem.sourceCount = codexKeys(unique).length
-      var texts = [rowItem.row.zh || '', rowItem.row.ja || '', rowItem.row.en || '']
-      rowItem.itemText = texts.join(' ')
-      delete rowItem.sources
-      out.byItem.push(rowItem)
-    }
+    out.byItem = buildItemEntries()
 
     state.codexIndex = out
     return out
@@ -625,7 +675,7 @@ const JS = String.raw`
         if (row.ja && row.ja.toLowerCase().indexOf(needle) >= 0) return true
         if (row.en && row.en.toLowerCase().indexOf(needle) >= 0) return true
         /* 掉落物也算命中：玩家常常是拿着一个素材找"去哪刷"。
-           但在「按掉落物」视图里，条目本身就是物品，上面几句已经覆盖，
+           但在「按物品」视图里，条目本身就是物品，上面几句已经覆盖，
            不该再拿 itemText 去匹配（那是另一套含义）。 */
         if (!itemsOnly && matchesItemName(entry.itemText, needle)) return true
         return false
@@ -635,7 +685,7 @@ const JS = String.raw`
     var isItemView = state.codexView === 'item'
     var pool = isItemView ? index.byItem : (state.codexView === 'stage' ? index.byStage : index.byMonster)
     var rows = matches(pool, isItemView)
-    /* 跨视图只在「按怪物 ↔ 按地点」之间做：「按掉落物」是一个独立入口，
+    /* 跨视图只在「按怪物 ↔ 按地点」之间做：「按物品」是一个独立入口，
        而且它只按物品名匹配，自动切过去或切出来都会让人莫名其妙。 */
     if (!isItemView && needle !== '' && rows.length === 0){
       var otherView = state.codexView === 'stage' ? 'monster' : 'stage'
@@ -650,6 +700,13 @@ const JS = String.raw`
     var sort = state.codexSort
     if (isItemView){
       var itemRows = rows
+      /* 来源类型筛选：掉落 / 采集 / 商店 / 兑换 */
+      var wantKind = state.codexItemKind
+      if (wantKind && wantKind !== 'all'){
+        itemRows = itemRows.filter(function (entry){
+          return entry.kinds.indexOf(wantKind) >= 0
+        })
+      }
       itemRows.sort(function(a, b){
         var an = a.row.zh || a.row.ja || a.row.en || a.id
         var bn = b.row.zh || b.row.ja || b.row.en || b.id
@@ -713,7 +770,7 @@ const JS = String.raw`
     var host = el('codexTabs')
     if (!host) return
     renderCodexServers()
-    var views = [['monster', '按怪物'], ['stage', '按地点'], ['item', '按掉落物']]
+    var views = [['monster', '按怪物'], ['stage', '按地点'], ['item', '按物品']]
     /* 排序项随视图变：「生成点」「等级」对物品没有意义，物品按「来源数 / 名称」排。 */
     var sorts = state.codexView === 'item'
       ? [['spots', '来源数'], ['name', '名称']]
@@ -729,6 +786,16 @@ const JS = String.raw`
     }
     for (var j = 0; j < sorts.length; j++){
       html += '<div class="job' + (state.codexSort === sorts[j][0] ? ' on' : '') + '" data-csort="' + sorts[j][0] + '">' + sorts[j][1] + '</div>'
+    }
+    /* 物品视图再加一行来源筛选：掉落只是来源之一，采集/商店/兑换各自可单独看 */
+    if (state.codexView === 'item'){
+      var kinds = [['all', '全部来源'], ['drop', '掉落'], ['gather', '采集'],
+                   ['shop', '商店'], ['exchange', '兑换']]
+      html += '<span class="codexFilterLabel">来源</span>'
+      for (var f = 0; f < kinds.length; f++){
+        html += '<div class="job' + (state.codexItemKind === kinds[f][0] ? ' on' : '') +
+                '" data-ikind="' + kinds[f][0] + '">' + kinds[f][1] + '</div>'
+      }
     }
     host.innerHTML = html
   }
@@ -748,63 +815,97 @@ const JS = String.raw`
   }
 
   /**
-   * 「按掉落物」视图：一个掉落物一行，右边是掉落它的怪物与地点。
+   * 「按物品」视图：一个物品一行，来源分四类（掉落/采集/商店/兑换）。
    *
    * 这里不复用怪物/地点的行结构：那一套是「一个实体 + 它关联的实体」，而这里
    * 主体是物品、关联有两类（怪物和地点），而且没有等级概念。
    */
+  /** 来源类型的显示名。 */
+  var ITEM_KIND_LABEL = { drop: '掉落', gather: '采集', shop: '商店', exchange: '兑换' }
+
+  function itemKindChips(entry){
+    var html = ''
+    for (var k in ITEM_KIND_LABEL){
+      if (!Object.prototype.hasOwnProperty.call(ITEM_KIND_LABEL, k)) continue
+      var n = entry.counts[k] || 0
+      if (n <= 0) continue
+      html += '<span class="numChip">' + ITEM_KIND_LABEL[k] + ' <b>' + n + '</b></span>'
+    }
+    return html
+  }
+
+  /** 一个物品的展开内容：按来源类型分组，最多列 40 条。 */
+  function itemSourcesHtml(entry){
+    var html = '<div class="itemSources">'
+    var total = 0
+    for (var k in ITEM_KIND_LABEL){
+      if (!Object.prototype.hasOwnProperty.call(ITEM_KIND_LABEL, k)) continue
+      var list = entry.lines[k] || []
+      if (list.length === 0) continue
+      html += '<div class="itemSourceGroup"><span class="itemSourceKind">' + ITEM_KIND_LABEL[k] +
+              '</span><span class="itemSourceList">'
+      for (var i = 0; i < list.length && i < 40; i++) html += '<span class="numChip">' + esc(list[i]) + '</span>'
+      if (list.length > 40) html += '<span class="tag">…还有 ' + (list.length - 40) + ' 条</span>'
+      html += '</span></div>'
+      total += list.length
+    }
+    if (total === 0) html += '<span class="tag">没有记录到来源</span>'
+    html += '</div>'
+    return html
+  }
+
+  /*
+   * 「按物品」视图：一个物品一行，来源**不止掉落**——还有采集、商店、兑换。
+   *
+   * 不复用怪物/地点的行结构：那一套是「一个实体 + 它关联的实体」，而这里主体是物品、
+   * 来源分四类，也没有等级概念。来源多的时候行里放不下，所以做成可展开。
+   */
   function renderCodexItems(rows){
     var codex = codexData()
     var cardHtml = ''
+    var table = '<table class="wide"><thead><tr>'
+    table += '<th>物品</th><th>日文原名</th><th class="num">来源数</th>'
+    table += '<th>来源类型</th><th>主要来源</th>'
+    table += '</tr></thead><tbody>'
     for (var i = 0; i < rows.length; i++){
       var entry = rows[i]
       var row = entry.row || {}
-      var monsterNames = []
-      var monsterIds = codexKeys(entry.monsters)
-      for (var a = 0; a < monsterIds.length; a++) monsterNames.push(codexName(codex.monsters, monsterIds[a], monsterIds[a]))
-      var stageNames = []
-      var stageIds = codexKeys(entry.stages)
-      for (var b = 0; b < stageIds.length; b++) stageNames.push(namePair(codex.stages, stageIds[b], stageIds[b]))
-      cardHtml += '<div class="skill codexCard codexItemCard">'
+      var open = state.codexOpen === ('item:' + entry.id)
+      /* 卡片视图 */
+      cardHtml += '<div class="skill codexCard codexItemCard' + (open ? ' on' : '') + '" data-codex="item:' + esc(entry.id) + '">'
       cardHtml += '<div class="skillName">' + esc(itemPair(row, entry.id)) + '</div>'
-      cardHtml += '<div class="skillNums">'
-      cardHtml += '<span class="numChip">怪物 <b>' + monsterIds.length + '</b></span>'
-      cardHtml += '<span class="numChip">地点 <b>' + stageIds.length + '</b></span>'
-      cardHtml += '<span class="numChip">来源 <b>' + entry.sourceCount + '</b></span>'
-      cardHtml += '<span class="numChip">掉落率 <b>' + esc(chanceRange(entry.chances)) + '</b></span>'
+      cardHtml += '<div class="skillNums">' + itemKindChips(entry) +
+                  '<span class="numChip">来源 <b>' + entry.sourceCount + '</b></span></div>'
+      cardHtml += '<div class="skillNote">' + esc(entry.lines.drop.slice(0, 3).join('、') ||
+                  entry.lines.gather.slice(0, 2).join('、') || '') + '</div>'
+      if (open) cardHtml += itemSourcesHtml(entry)
       cardHtml += '</div>'
-      cardHtml += '<div class="skillNote">掉落怪物：' + esc(monsterNames.join('、')) + '</div>'
-      cardHtml += '<div class="skillNote">掉落地点：' + esc(stageNames.join('、')) + '</div>'
-      cardHtml += '</div>'
-    }
-    el('codexList').innerHTML = rows.length === 0 ? '<div class="empty">没有匹配的掉落物</div>' : cardHtml
-
-    var host = el('codexTable')
-    if (!host) return
-    var table = '<table class="wide"><thead><tr>'
-    table += '<th>掉落物</th><th>日文原名</th><th>掉落怪物</th><th>掉落地点</th>'
-    table += '<th class="num">来源</th><th class="num">掉落率</th>'
-    table += '</tr></thead><tbody>'
-    for (var t = 0; t < rows.length; t++){
-      var entry2 = rows[t]
-      var row2 = entry2.row || {}
-      var mNames = []
-      var mIds = codexKeys(entry2.monsters)
-      for (var c = 0; c < mIds.length; c++) mNames.push(codexName(codex.monsters, mIds[c], mIds[c]))
-      var sNames = []
-      var sIds = codexKeys(entry2.stages)
-      for (var d = 0; d < sIds.length; d++) sNames.push(namePair(codex.stages, sIds[d], sIds[d]))
-      table += '<tr>'
-      table += '<td>' + esc(row2.zh || row2.ja || row2.en || entry2.id) + '</td>'
-      table += '<td>' + esc(row2.ja || '') + '</td>'
-      table += '<td class="codexPlaces">' + esc(mNames.join('、')) + '</td>'
-      table += '<td class="codexPlaces">' + esc(sNames.join('、')) + '</td>'
-      table += '<td class="num">' + entry2.sourceCount + '</td>'
-      table += '<td class="num">' + esc(chanceRange(entry2.chances)) + '</td>'
+      /* 表格视图 */
+      var kinds = []
+      for (var kk in ITEM_KIND_LABEL){
+        if (!Object.prototype.hasOwnProperty.call(ITEM_KIND_LABEL, kk)) continue
+        if ((entry.counts[kk] || 0) > 0) kinds.push(ITEM_KIND_LABEL[kk] + ' ' + entry.counts[kk])
+      }
+      var first = ''
+      for (var k2 in ITEM_KIND_LABEL){
+        if (!Object.prototype.hasOwnProperty.call(ITEM_KIND_LABEL, k2)) continue
+        if ((entry.lines[k2] || []).length > 0){ first = entry.lines[k2][0]; break }
+      }
+      table += '<tr class="' + (open ? 'on' : '') + '" data-codex="item:' + esc(entry.id) + '">'
+      table += '<td>' + esc(row.zh || row.ja || row.en || entry.id) + '</td>'
+      table += '<td>' + esc(row.ja || '') + '</td>'
+      table += '<td class="num">' + entry.sourceCount + '</td>'
+      table += '<td>' + esc(kinds.join(' · ')) + '</td>'
+      table += '<td class="codexPlaces">' + esc(first) + '</td>'
       table += '</tr>'
+      if (open){
+        table += '<tr class="codexDetailRow"><td colspan="5">' + itemSourcesHtml(entry) + '</td></tr>'
+      }
     }
     table += '</tbody></table>'
-    host.innerHTML = rows.length === 0 ? '' : table
+    el('codexList').innerHTML = rows.length === 0 ? '<div class="empty">没有匹配的物品</div>' : cardHtml
+    var host = el('codexTable')
+    if (host) host.innerHTML = rows.length === 0 ? '' : table
   }
 
   function renderCodex(){
@@ -816,7 +917,7 @@ const JS = String.raw`
       renderCodexItems(rows)
       var stats2 = codex.stats || {}
       var allItems = codex.itemNames ? codexKeys(codex.itemNames).length : rows.length
-      if (el('codexMeta')) el('codexMeta').textContent = rows.length + ' 种掉落物 · ' + allItems + ' 种物品 · ' + (stats2.drops || 0) + ' 张掉落表 · ' + (stats2.spots || 0) + ' 条生成记录 · 译名来自汉化包'
+      if (el('codexMeta')) el('codexMeta').textContent = rows.length + ' 种物品 · ' + allItems + ' 种物品 · ' + (stats2.drops || 0) + ' 张掉落表 · ' + (stats2.spots || 0) + ' 条生成记录 · 译名来自汉化包'
       return
     }
     var isMonster = state.codexView !== 'stage'
@@ -886,7 +987,7 @@ const JS = String.raw`
     if (!codexData() || !key) return ''
     var codex = codexData()
     var parts = key.split(':')
-    /* 物品视图没有可展开的详情，「按掉落物」的信息已经在行里给全了 */
+    /* 物品的展开内容由 itemSourcesHtml 负责，这里没有通用详情 */
     if (parts[0] === 'item') return ''
     var isMonster = parts[0] !== 'stage'
     var id = parts.slice(1).join(':')
@@ -954,6 +1055,14 @@ const JS = String.raw`
     var sortNode = target.closest('[data-csort]')
     if (sortNode){
       state.codexSort = sortNode.getAttribute('data-csort')
+      renderCodex()
+      return
+    }
+    /* 来源类型筛选（物品视图） */
+    var kindNode = target.closest('[data-ikind]')
+    if (kindNode){
+      state.codexItemKind = kindNode.getAttribute('data-ikind')
+      state.codexOpen = null
       renderCodex()
       return
     }
