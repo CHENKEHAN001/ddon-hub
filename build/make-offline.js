@@ -293,6 +293,9 @@ a.chip:hover{border-color:var(--dim);color:var(--fg)}
   .wrap{max-width:1500px;padding:14px 20px 60px}
   #skills{display:none}
   #codexList{display:none}
+  /* 合成/强化的卡片版也要在这里关掉，否则宽屏下卡片和表格会同时出现（两份） */
+  #craftList{display:none}
+  #upList{display:none}
   .wideWrap{display:block}
   /*
    * 图鉴与技能各自在自己的框里滚动，页面本身不再被拉到几万像素。
@@ -2209,7 +2212,7 @@ const JS = String.raw`
    * 强化那边特别注意星级：链上的第 i 个状态就是 i 颗星，名字用「基础名 + ★」拼
    * （详见 labelFrom 的注释）。Wiki 把整条链都写成同一个名字，看着像原地升级。
    */
-  var craftState = { q: '', cat: 'all', upQ: '', upCat: 'all', limit: 300 }
+  var craftState = { q: '', cat: 'all', upQ: '', upCat: 'all' }
 
   function craftData(){ return boot.codex ? boot.codex.craft : null }
 
@@ -2252,7 +2255,8 @@ const JS = String.raw`
     var table = el('craftTable')
     var list = el('craftList')
     if (!d || !table || !list) return
-    var q = craftState.q.trim().toLowerCase()
+    /* 和图鉴一样用 codexFold 做繁->简，简体输入才搜得到汉化包的繁体名 */
+    var q = codexFold(craftState.q.trim())
     var counts = {}
     for (var c = 0; c < d.craft.length; c++) counts[d.craft[c].c] = (counts[d.craft[c].c] || 0) + 1
 
@@ -2263,13 +2267,14 @@ const JS = String.raw`
       if (q !== ''){
         var hay = craftName(r.id)
         for (var m = 0; m < (r.m || []).length; m++) hay += ' ' + craftName(r.m[m][0])
-        if (hay.toLowerCase().indexOf(q) < 0) continue
+        if (codexFold(hay).indexOf(q) < 0) continue
       }
       rows.push(r)
     }
     catRow('craftCats', counts, craftState.cat, '分类')
 
-    var shown = rows.slice(0, craftState.limit)
+    /* 不分页：全部铺进滚动框，框内滚（和资料图鉴一致） */
+    var shown = rows
     var t = '<table class="wide"><thead><tr>'
     t += '<th>成品</th><th class="num">产出</th><th>材料</th><th class="num">耗时</th>'
     t += '<th class="num">花费</th><th class="num">需等级</th>'
@@ -2292,10 +2297,10 @@ const JS = String.raw`
                '<span class="numChip">需等级 <b>' + (row.r == null ? '—' : row.r) + '</b></span></div></div>'
     }
     t += '</tbody></table>'
+    var wide = wideScreen()
     table.innerHTML = shown.length === 0 ? '<div class="empty">没有匹配的配方</div>' : t
-    list.innerHTML = shown.length === 0 ? '' : cards
-    el('craftMeta').textContent = '筛出 ' + rows.length + ' / 共 ' + d.craft.length + ' 条配方' +
-      (rows.length > shown.length ? '（先显示前 ' + shown.length + ' 条，用搜索缩小范围）' : '')
+    list.innerHTML = (wide || shown.length === 0) ? '' : cards
+    el('craftMeta').textContent = '筛出 ' + rows.length + ' / 共 ' + d.craft.length + ' 条配方'
   }
 
   function renderUpgrade(){
@@ -2303,7 +2308,7 @@ const JS = String.raw`
     var table = el('upTable')
     var list = el('upList')
     if (!d || !table || !list) return
-    var q = craftState.upQ.trim().toLowerCase()
+    var q = codexFold(craftState.upQ.trim())
     var counts = {}
     for (var c = 0; c < d.gradeup.length; c++) counts[d.gradeup[c].c] = (counts[d.gradeup[c].c] || 0) + 1
 
@@ -2314,13 +2319,13 @@ const JS = String.raw`
       if (q !== ''){
         var hay = craftName(r.f) + ' ' + craftName(r.t)
         for (var m = 0; m < (r.m || []).length; m++) hay += ' ' + craftName(r.m[m][0])
-        if (hay.toLowerCase().indexOf(q) < 0) continue
+        if (codexFold(hay).indexOf(q) < 0) continue
       }
       rows.push(r)
     }
     catRow('upCats', counts, craftState.upCat, '分类')
 
-    var shown = rows.slice(0, craftState.limit)
+    var shown = rows
     var t = '<table class="wide"><thead><tr>'
     t += '<th>物品</th><th>强化后</th><th>材料</th><th class="num">花费</th>'
     t += '</tr></thead><tbody>'
@@ -2338,10 +2343,22 @@ const JS = String.raw`
                '<span class="numChip">目标 <b>' + esc(to) + '</b></span></div></div>'
     }
     t += '</tbody></table>'
+    var wideUp = wideScreen()
     table.innerHTML = shown.length === 0 ? '<div class="empty">没有匹配的强化配方</div>' : t
-    list.innerHTML = shown.length === 0 ? '' : cards
-    el('upMeta').textContent = '筛出 ' + rows.length + ' / 共 ' + d.gradeup.length + ' 步强化' +
-      (rows.length > shown.length ? '（先显示前 ' + shown.length + ' 条，用搜索缩小范围）' : '')
+    list.innerHTML = (wideUp || shown.length === 0) ? '' : cards
+    el('upMeta').textContent = '筛出 ' + rows.length + ' / 共 ' + d.gradeup.length + ' 步强化'
+  }
+
+  /**
+   * 宽屏用表格、窄屏用卡片，另一个不生成 DOM。
+   *
+   * 只靠 CSS 隐藏的话，11060 条强化会生成两套节点（表格 + 卡片），DOM 直接翻倍、
+   * 页面里的 ★ 能出现十一万次——白白占内存。所以按当前宽度只渲染要用的那一套。
+   */
+  function wideScreen(){
+    return typeof window.matchMedia === 'function'
+      ? window.matchMedia('(min-width:900px)').matches
+      : window.innerWidth >= 900
   }
 
   function mountCraft(){
@@ -2350,21 +2367,28 @@ const JS = String.raw`
     renderCraft()
     renderUpgrade()
     var box = el('craftSearch')
-    if (box) box.addEventListener('input', function(){ craftState.q = box.value; craftState.limit = 300; renderCraft() })
+    if (box) box.addEventListener('input', function(){ craftState.q = box.value; renderCraft() })
     var ubox = el('upSearch')
-    if (ubox) ubox.addEventListener('input', function(){ craftState.upQ = ubox.value; craftState.limit = 300; renderUpgrade() })
+    if (ubox) ubox.addEventListener('input', function(){ craftState.upQ = ubox.value; renderUpgrade() })
     var cats = el('craftCats')
     if (cats) cats.addEventListener('click', function(event){
       var node = event.target.closest ? event.target.closest('[data-ccat]') : null
       if (!node) return
-      craftState.cat = node.getAttribute('data-ccat'); craftState.limit = 300; renderCraft()
+      craftState.cat = node.getAttribute('data-ccat'); renderCraft()
     })
     var ucats = el('upCats')
     if (ucats) ucats.addEventListener('click', function(event){
       var node = event.target.closest ? event.target.closest('[data-ccat]') : null
       if (!node) return
-      craftState.upCat = node.getAttribute('data-ccat'); craftState.limit = 300; renderUpgrade()
+      craftState.upCat = node.getAttribute('data-ccat'); renderUpgrade()
     })
+    /* 跨过 900px 时要换另一套（表格 <-> 卡片），否则会看到空列表 */
+    if (typeof window.matchMedia === 'function'){
+      var mq = window.matchMedia('(min-width:900px)')
+      var swap = function(){ renderCraft(); renderUpgrade() }
+      if (mq.addEventListener) mq.addEventListener('change', swap)
+      else if (mq.addListener) mq.addListener(swap)
+    }
     el('legend').textContent = boot.legend
   }
 
