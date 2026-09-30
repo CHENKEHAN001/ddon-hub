@@ -289,8 +289,41 @@ a.chip:hover{border-color:var(--dim);color:var(--fg)}
    同一套排序，所以只有显示形式不同，不会一边有一边没有。
    --------------------------------------------------------------------------- */
 .wideWrap{display:none}
+/* 宽度手柄只在宽屏出现（窄屏整页就是满宽，没有可拖的余地） */
+#widthGripL,#widthGripR{display:none}
+#widthTip{display:none}
 @media (min-width:900px){
-  .wrap{max-width:1500px;padding:14px 20px 60px}
+  /* 宽度交给可拖动的手柄（--wrap-max），默认 1500 */
+  .wrap{max-width:var(--wrap-max,1500px);padding:14px 20px 60px;position:relative}
+  /*
+   * 页面宽度的手柄：左右各一条，**平时是隐形的**，鼠标移上去才浮出一条竖线。
+   *
+   * 和 DSH 那个分割线一个意思——不占视觉、但要能拖。所以手柄本身是一块透明区域
+   * （14px 宽，比线宽得多，好抓），竖线用 ::after 画，默认 opacity:0。
+   * .wrap 是居中的，所以拖左边和拖右边等价，两边都放是为了顺手。
+   */
+  #widthGripL,#widthGripR{
+    display:block;
+    position:absolute;top:0;width:14px;height:100%;
+    cursor:ew-resize;z-index:5;touch-action:none;
+  }
+  #widthGripL{left:-7px}
+  #widthGripR{right:-7px}
+  #widthGripL::after,#widthGripR::after{
+    content:'';position:absolute;top:50%;left:6px;width:2px;height:56px;margin-top:-28px;
+    border-radius:2px;background:var(--fg);opacity:0;
+    transition:opacity .15s,height .15s,margin-top .15s;
+  }
+  #widthGripL:hover::after,#widthGripR:hover::after{opacity:.5;height:84px;margin-top:-42px}
+  #widthGripL.on::after,#widthGripR.on::after{opacity:.85;height:100px;margin-top:-50px}
+  #widthTip{
+    display:block;
+    position:fixed;top:14px;left:50%;transform:translateX(-50%);
+    padding:4px 12px;border-radius:8px;font-size:12.5px;
+    background:var(--panel2);border:1px solid var(--line);color:var(--fg);
+    pointer-events:none;opacity:0;transition:opacity .12s;z-index:20;
+  }
+  #widthTip.on{opacity:1}
   #skills{display:none}
   #codexList{display:none}
   /* 合成/强化的卡片版也要在这里关掉，否则宽屏下卡片和表格会同时出现（两份） */
@@ -2349,6 +2382,111 @@ const JS = String.raw`
     el('upMeta').textContent = '筛出 ' + rows.length + ' / 共 ' + d.gradeup.length + ' 步强化'
   }
 
+  /* ------------------------------------------------------------ 页面宽度 */
+
+  /*
+   * 右边缘的拖动手柄：改 --wrap-max，存 localStorage，双击回默认。
+   *
+   * 页宽用 CSS 变量而不是直接改样式，是因为 .wrap 的 max-width 写在 media query 里，
+   * 变量能在不碰那条规则的情况下被覆盖。拖动时把页面 scrollY 也保住——宽度一变内容
+   * 会重排，不钉住的话视口会自己跳走。
+   */
+  var WRAP_KEY = 'ddon-wrap-width'
+  var WRAP_DEFAULT = 1500
+
+  function applyWrapWidth(px){
+    document.documentElement.style.setProperty('--wrap-max', px + 'px')
+  }
+
+  function mountWidthGrip(){
+    var grips = []
+    var gl = el('widthGripL')
+    var gr = el('widthGripR')
+    if (gl) grips.push(gl)
+    if (gr) grips.push(gr)
+    var tip = el('widthTip')
+    if (grips.length === 0) return
+    try {
+      var saved = parseInt(window.localStorage.getItem(WRAP_KEY) || '', 10)
+      if (saved >= 900) applyWrapWidth(saved)
+    } catch (e) { /* 隐私模式下 localStorage 会抛，忽略即可 */ }
+    var dragging = false
+    var startY = 0
+    var startScroll = 0
+    var current = WRAP_DEFAULT
+    var active = null
+    var showTip = function(px){
+      if (!tip) return
+      tip.textContent = px + ' px'
+      tip.classList.add('on')
+    }
+    var hideTip = function(){ if (tip) tip.classList.remove('on') }
+    var widthFromX = function(clientX){
+      /* .wrap 是居中的，所以宽度 = 鼠标到视口中心的距离 × 2（左右手柄同一套算法） */
+      var half = Math.abs(clientX - window.innerWidth / 2)
+      var w = Math.round(half * 2)
+      var max = Math.max(900, window.innerWidth - 16)
+      return Math.max(900, Math.min(w, max))
+    }
+    var onDown = function(grip, event){
+      event.preventDefault()
+      dragging = true
+      active = grip
+      startY = event.clientY
+      startScroll = window.scrollY
+      grip.classList.add('on')
+      document.body.style.userSelect = 'none'
+      document.body.style.cursor = 'ew-resize'
+    }
+    var onMove = function(event){
+      if (!dragging) return
+      current = widthFromX(event.clientX)
+      applyWrapWidth(current)
+      showTip(current)
+      /* 宽度变了内容就重排，把滚动位置钉回拖动开始时那一处，免得视口乱跳 */
+      var drift = (event.clientY - startY)
+      window.scrollTo(0, startScroll + drift)
+    }
+    var onUp = function(){
+      if (!dragging) return
+      dragging = false
+      if (active) active.classList.remove('on')
+      active = null
+      document.body.style.userSelect = ''
+      document.body.style.cursor = ''
+      hideTip()
+      try { window.localStorage.setItem(WRAP_KEY, String(current)) } catch (e) {}
+    }
+    var reset = function(){
+      try { window.localStorage.removeItem(WRAP_KEY) } catch (e) {}
+      document.documentElement.style.removeProperty('--wrap-max')
+      current = WRAP_DEFAULT
+      showTip(WRAP_DEFAULT)
+      window.setTimeout(hideTip, 700)
+    }
+    for (var i = 0; i < grips.length; i++){
+      (function(grip){
+        grip.addEventListener('mousedown', function(event){ onDown(grip, event) })
+        grip.addEventListener('dblclick', reset)
+        /* 触摸：手柄自带 touch-action:none，pointer 事件覆盖手指 */
+        grip.addEventListener('pointerdown', function(event){
+          if (event.pointerType !== 'touch') return
+          onDown(grip, event)
+        })
+      })(grips[i])
+    }
+    document.addEventListener('mousemove', onMove)
+    document.addEventListener('mouseup', onUp)
+    document.addEventListener('pointermove', function(event){
+      if (event.pointerType !== 'touch' || !dragging) return
+      onMove(event)
+    })
+    document.addEventListener('pointerup', function(event){
+      if (event.pointerType !== 'touch') return
+      onUp()
+    })
+  }
+
   /**
    * 宽屏用表格、窄屏用卡片，另一个不生成 DOM。
    *
@@ -2394,6 +2532,7 @@ const JS = String.raw`
 
   mountCodex()
   mountCraft()
+  mountWidthGrip()
   el('legend').textContent = boot.legend
   el('captured').textContent = '技能表 ' + boot.capturedAt + ' 抓取'
   fetchLive()
@@ -2456,6 +2595,9 @@ ${ASSETS.favicon === null || hosted ? '' : `<link rel="apple-touch-icon" href="$
 </head>
 <body>
 <div class="wrap">
+  <div id="widthGripL" title="拖动调整页面宽度（双击重置为 1500）"></div>
+  <div id="widthGripR" title="拖动调整页面宽度（双击重置为 1500）"></div>
+  <div id="widthTip"></div>
   <header>
     ${ASSETS.crest === null ? '' : `<img class="crest" src="${ASSETS.crest}" alt="" width="26" height="26">`}
     <h1>DDON 资料站</h1>
