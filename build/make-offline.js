@@ -79,6 +79,17 @@ const ITEM_SOURCES = fs.existsSync(ITEM_SOURCES_SOURCE)
   ? JSON.parse(fs.readFileSync(ITEM_SOURCES_SOURCE, 'utf8'))
   : null
 
+/**
+ * 合成与强化配方（Revival 的 CraftingRecipes / CraftingRecipesGradeUp）。
+ *
+ * 强化那部分带 starBase/starOf：星级物品在数据里跟基础物品同名、没有独立译名，
+ * 界面用「基础名 + ★」拼出来（星星个数就是星级，★★★★ 是满强）。
+ */
+const CRAFT_SOURCE = path.join(ROOT, 'src', 'servers', 'craft.json')
+const CRAFT = fs.existsSync(CRAFT_SOURCE)
+  ? JSON.parse(fs.readFileSync(CRAFT_SOURCE, 'utf8'))
+  : null
+
 const CODEX = (() => {
   if (SERVERS_FILE !== null) {
     const shared = {
@@ -106,7 +117,7 @@ const CODEX = (() => {
     }
     const first = Object.keys(servers)[0]
     return { ...shared, servers, defaultServer: first, ...servers[first],
-             itemSources: ITEM_SOURCES }
+             itemSources: ITEM_SOURCES, craft: CRAFT }
   }
   /* 还没有多服务器数据时退回单份快照，保证老流程仍能构建 */
   const text = fs.readFileSync(MONSTERS_SOURCE, 'utf8')
@@ -183,6 +194,9 @@ input{min-height:34px;padding:6px 10px}
 .skillDetailRow:hover{background:transparent}
 .skillDetailRow>td{padding:0 0 10px;border-top:0}
 .skillDetailBody{border:1px solid var(--line);border-radius:10px;padding:10px 12px;background:var(--panel)}
+/* 强化那节的说明：讲清星级是怎么来的（Wiki 没标星级，看着像原地升级） */
+.craftNote{margin:2px 0 8px;font-size:12.5px;line-height:1.6;color:var(--dim)}
+.craftNote b{color:var(--fg)}
 /*
  * 详情区域整体可点 = 收起（不用按钮）。
  * 里面的可编辑值要排除掉，否则点它想改中文会变成把详情关掉。
@@ -509,6 +523,38 @@ const JS = String.raw`
     return row.zh || row.ja || row.en || (fallback === undefined ? '' : fallback)
   }
 
+  /** 星级物品的名字后缀：1 星 ★，4 星 ★★★★（满强）。 */
+  function starMarks(n){
+    var s = ''
+    for (var i = 0; i < (n || 0); i++) s += '★'
+    return s
+  }
+
+  /**
+   * 物品名（带星级）的纯函数版：把字典和星级映射直接传进来。
+   *
+   * itemLabel 走 codexData()，而建索引时要算上万次物品名——每次都重建一遍
+   * codexData 那个对象会明显卡（实测索引构建会从几十毫秒涨到秒级）。
+   */
+  function labelFrom(names, starOf, starBase, id){
+    var row = names[id] || {}
+    var name = row.zh || row.ja || row.en || ''
+    var star = starOf[id]
+    if (star){
+      var brow = names[starBase[id]] || {}
+      var bname = brow.zh || brow.ja || brow.en || name
+      if (bname) return bname + starMarks(star)
+    }
+    return name || id
+  }
+
+  function itemLabel(id){
+    var codex = codexData()
+    var craft = (codex && codex.craft) || {}
+    return labelFrom((codex && codex.itemNames) || {},
+                     craft.starOf || {}, craft.starBase || {}, id)
+  }
+
   /*
    * 中文 + 日文原文：「法拉納平原 ファーラナ平原」。
    *
@@ -616,18 +662,26 @@ const JS = String.raw`
       var data = codex.itemSources
       var list = []
       if (!data || !data.items) return list
+      /* 建索引要走上万次物品名，所以这里取一次字典与星级映射，用纯函数版算 */
+      var names = codex.itemNames || {}
+      var craftMeta = codex.craft || {}
+      var starOf = craftMeta.starOf || {}
+      var starBase = craftMeta.starBase || {}
+      var nameOf = function(id){ return labelFrom(names, starOf, starBase, id) }
       for (var iid in data.items){
         if (!Object.prototype.hasOwnProperty.call(data.items, iid)) continue
         var raw = data.items[iid]
-        var rec = { drop: [], gather: [], shop: [], exchange: [] }
+        var rec = { drop: [], gather: [], shop: [], exchange: [], craft: [], gradeup: [] }
         for (var i = 0; i < raw.length; i++){
           var src = raw[i]
           if (src.k === 'drop') rec.drop.push(src)
           else if (src.k === 'gather') rec.gather.push(src)
           else if (src.k === 'shop') rec.shop.push(src)
           else if (src.k === 'exchange') rec.exchange.push(src)
+          else if (src.k === 'craft') rec.craft.push(src)
+          else if (src.k === 'gradeup') rec.gradeup.push(src)
         }
-        var lines = { drop: [], gather: [], shop: [], exchange: [] }
+        var lines = { drop: [], gather: [], shop: [], exchange: [], craft: [], gradeup: [] }
         var mons = {}
         for (var d = 0; d < rec.drop.length; d++){
           var m = rec.drop[d]
@@ -687,6 +741,34 @@ const JS = String.raw`
           lines.exchange.push('【' + (ex.t || '') + '】' + (ex.r || '') +
                               (cost.length ? ' ← ' + cost.join(' + ') : ''))
         }
+        /*
+         * 合成：这个物品是造出来的，材料是什么。
+         * 强化：星级物品（★…★★★★）是由低一星强化上来的。
+         */
+        for (var cr = 0; cr < rec.craft.length; cr++){
+          var rc = rec.craft[cr]
+          var need = []
+          for (var cm = 0; cm < (rc.m || []).length; cm++){
+            need.push(nameOf(rc.m[cm][0]) + '×' + rc.m[cm][1])
+          }
+          var extra = []
+          if (rc.n && rc.n > 1) extra.push('产出×' + rc.n)
+          if (rc.t) extra.push('耗时 ' + rc.t + ' 秒')
+          if (rc.cost) extra.push(rc.cost + ' 金币')
+          if (rc.r) extra.push('需等级 ' + rc.r)
+          lines.craft.push((need.length ? need.join(' + ') : '无材料') +
+                           (extra.length ? '（' + extra.join('，') + '）' : ''))
+        }
+        for (var gu = 0; gu < rec.gradeup.length; gu++){
+          var rg = rec.gradeup[gu]
+          var gneed = []
+          for (var gm = 0; gm < (rg.m || []).length; gm++){
+            gneed.push(nameOf(rg.m[gm][0]) + '×' + rg.m[gm][1])
+          }
+          lines.gradeup.push('由 ' + nameOf(rg.f) + ' 强化而来' +
+                             (gneed.length ? ' ← ' + gneed.join(' + ') : '') +
+                             (rg.cost ? '（' + rg.cost + ' 金币）' : ''))
+        }
         var text = []
         var kinds = []
         for (var kk in lines){
@@ -700,12 +782,16 @@ const JS = String.raw`
         list.push({
           id: iid,
           row: row,
+          /* 星级物品（★…）在字典里没有独立条目，名字靠 label 拼 */
+          label: nameOf(iid),
           kinds: kinds,
           counts: { drop: rec.drop.length, gather: rec.gather.length,
-                    shop: rec.shop.length, exchange: rec.exchange.length },
+                    shop: rec.shop.length, exchange: rec.exchange.length,
+                    craft: rec.craft.length, gradeup: rec.gradeup.length },
           lines: lines,
-          sourceCount: rec.drop.length + rec.gather.length + rec.shop.length + rec.exchange.length,
-          itemText: [row.zh || '', row.ja || '', row.en || ''].concat(text).join(' '),
+          sourceCount: rec.drop.length + rec.gather.length + rec.shop.length +
+                       rec.exchange.length + rec.craft.length + rec.gradeup.length,
+          itemText: [row.zh || '', row.ja || '', row.en || '', nameOf(iid)].concat(text).join(' '),
         })
       }
       return list
@@ -960,7 +1046,8 @@ const JS = String.raw`
    * 主体是物品、关联有两类（怪物和地点），而且没有等级概念。
    */
   /** 来源类型的显示名。 */
-  var ITEM_KIND_LABEL = { drop: '掉落', gather: '采集', shop: '商店', exchange: '兑换' }
+  var ITEM_KIND_LABEL = { drop: '掉落', gather: '采集', shop: '商店', exchange: '兑换',
+                          craft: '合成', gradeup: '强化' }
 
   /*
    * 商店结算用的货币。
@@ -1031,7 +1118,7 @@ const JS = String.raw`
       var open = state.codexOpen === ('item:' + entry.id)
       /* 卡片视图 */
       cardHtml += '<div class="skill codexCard codexItemCard' + (open ? ' on' : '') + '" data-codex="item:' + esc(entry.id) + '">'
-      cardHtml += '<div class="skillName">' + esc(itemPair(row, entry.id)) + '</div>'
+      cardHtml += '<div class="skillName">' + esc(entry.label || itemPair(row, entry.id)) + '</div>'
       cardHtml += '<div class="skillNums">' + itemKindChips(entry) +
                   '<span class="numChip">来源 <b>' + entry.sourceCount + '</b></span></div>'
       cardHtml += '<div class="skillNote">' + esc(entry.lines.drop.slice(0, 3).join('、') ||
@@ -1058,7 +1145,7 @@ const JS = String.raw`
         for (var li = 0; li < ls.length; li++) allLines.push(ITEM_KIND_LABEL[k3] + '：' + ls[li])
       }
       table += '<td title="' + esc(allLines.join('\n')) + '">' +
-               esc(row.zh || row.ja || row.en || entry.id) + '</td>'
+               esc(entry.label || row.zh || row.ja || row.en || entry.id) + '</td>'
       table += '<td>' + esc(row.ja || '') + '</td>'
       table += '<td class="num">' + entry.sourceCount + '</td>'
       table += '<td>' + esc(kinds.join(' · ')) + '</td>'
@@ -2114,7 +2201,175 @@ const JS = String.raw`
   renderNews()
   renderLinks()
   renderFooter()
+  /* ------------------------------------------------------------ 合成 / 强化 */
+
+  /*
+   * 合成与强化的两个列表。数据来自 craft.json（build-craft.py 生成）。
+   *
+   * 强化那边特别注意星级：链上的第 i 个状态就是 i 颗星，名字用「基础名 + ★」拼
+   * （详见 labelFrom 的注释）。Wiki 把整条链都写成同一个名字，看着像原地升级。
+   */
+  var craftState = { q: '', cat: 'all', upQ: '', upCat: 'all', limit: 300 }
+
+  function craftData(){ return boot.codex ? boot.codex.craft : null }
+
+  /** 名称：成品/材料都可能是星级物品。 */
+  function craftName(id){
+    var d = craftData()
+    var codex = codexData()
+    return labelFrom((codex && codex.itemNames) || {},
+                     (d && d.starOf) || {}, (d && d.starBase) || {}, id)
+  }
+
+  function matText(list){
+    var parts = []
+    for (var i = 0; i < (list || []).length; i++){
+      parts.push(craftName(list[i][0]) + '×' + list[i][1])
+    }
+    return parts.length ? parts.join('　+　') : '—'
+  }
+
+  /** 分类筛选行。不选分类时按钮上带该分类的条数。 */
+  function catRow(hostId, counts, current, allLabel){
+    var host = el(hostId)
+    if (!host) return
+    var keys = []
+    for (var k in counts) keys.push(k)
+    keys.sort(function(a, b){ return a - b })
+    if (keys.length < 2){ host.innerHTML = ''; host.style.display = 'none'; return }
+    host.style.display = ''
+    var html = '<span class="codexServerLabel">' + allLabel + '</span>'
+    html += '<div class="job' + (current === 'all' ? ' on' : '') + '" data-ccat="all">全部</div>'
+    for (var i = 0; i < keys.length; i++){
+      html += '<div class="job' + (current === keys[i] ? ' on' : '') + '" data-ccat="' + esc(keys[i]) + '">' +
+              esc(keys[i]) + '<span class="codexVariantCount">' + counts[keys[i]] + '</span></div>'
+    }
+    host.innerHTML = html
+  }
+
+  function renderCraft(){
+    var d = craftData()
+    var table = el('craftTable')
+    var list = el('craftList')
+    if (!d || !table || !list) return
+    var q = craftState.q.trim().toLowerCase()
+    var counts = {}
+    for (var c = 0; c < d.craft.length; c++) counts[d.craft[c].c] = (counts[d.craft[c].c] || 0) + 1
+
+    var rows = []
+    for (var i = 0; i < d.craft.length; i++){
+      var r = d.craft[i]
+      if (craftState.cat !== 'all' && String(r.c) !== craftState.cat) continue
+      if (q !== ''){
+        var hay = craftName(r.id)
+        for (var m = 0; m < (r.m || []).length; m++) hay += ' ' + craftName(r.m[m][0])
+        if (hay.toLowerCase().indexOf(q) < 0) continue
+      }
+      rows.push(r)
+    }
+    catRow('craftCats', counts, craftState.cat, '分类')
+
+    var shown = rows.slice(0, craftState.limit)
+    var t = '<table class="wide"><thead><tr>'
+    t += '<th>成品</th><th class="num">产出</th><th>材料</th><th class="num">耗时</th>'
+    t += '<th class="num">花费</th><th class="num">需等级</th>'
+    t += '</tr></thead><tbody>'
+    var cards = ''
+    for (var j = 0; j < shown.length; j++){
+      var row = shown[j]
+      t += '<tr><td>' + esc(craftName(row.id)) + '</td>'
+      t += '<td class="num">' + (row.n || 1) + '</td>'
+      t += '<td>' + esc(matText(row.m)) + '</td>'
+      t += '<td class="num">' + (row.t == null ? '—' : row.t + 's') + '</td>'
+      t += '<td class="num">' + (row.cost == null ? '—' : row.cost) + '</td>'
+      t += '<td class="num">' + (row.r == null ? '—' : row.r) + '</td></tr>'
+      cards += '<div class="skill codexCard">'
+      cards += '<div class="skillName">' + esc(craftName(row.id)) + '</div>'
+      cards += '<div class="skillNote">' + esc(matText(row.m)) + '</div>'
+      cards += '<div class="skillNums"><span class="numChip">产出 <b>' + (row.n || 1) + '</b></span>' +
+               '<span class="numChip">耗时 <b>' + (row.t == null ? '—' : row.t + 's') + '</b></span>' +
+               '<span class="numChip">花费 <b>' + (row.cost == null ? '—' : row.cost) + '</b></span>' +
+               '<span class="numChip">需等级 <b>' + (row.r == null ? '—' : row.r) + '</b></span></div></div>'
+    }
+    t += '</tbody></table>'
+    table.innerHTML = shown.length === 0 ? '<div class="empty">没有匹配的配方</div>' : t
+    list.innerHTML = shown.length === 0 ? '' : cards
+    el('craftMeta').textContent = '筛出 ' + rows.length + ' / 共 ' + d.craft.length + ' 条配方' +
+      (rows.length > shown.length ? '（先显示前 ' + shown.length + ' 条，用搜索缩小范围）' : '')
+  }
+
+  function renderUpgrade(){
+    var d = craftData()
+    var table = el('upTable')
+    var list = el('upList')
+    if (!d || !table || !list) return
+    var q = craftState.upQ.trim().toLowerCase()
+    var counts = {}
+    for (var c = 0; c < d.gradeup.length; c++) counts[d.gradeup[c].c] = (counts[d.gradeup[c].c] || 0) + 1
+
+    var rows = []
+    for (var i = 0; i < d.gradeup.length; i++){
+      var r = d.gradeup[i]
+      if (craftState.upCat !== 'all' && String(r.c) !== craftState.upCat) continue
+      if (q !== ''){
+        var hay = craftName(r.f) + ' ' + craftName(r.t)
+        for (var m = 0; m < (r.m || []).length; m++) hay += ' ' + craftName(r.m[m][0])
+        if (hay.toLowerCase().indexOf(q) < 0) continue
+      }
+      rows.push(r)
+    }
+    catRow('upCats', counts, craftState.upCat, '分类')
+
+    var shown = rows.slice(0, craftState.limit)
+    var t = '<table class="wide"><thead><tr>'
+    t += '<th>物品</th><th>强化后</th><th>材料</th><th class="num">花费</th>'
+    t += '</tr></thead><tbody>'
+    var cards = ''
+    for (var j = 0; j < shown.length; j++){
+      var row = shown[j]
+      var from = craftName(row.f), to = craftName(row.t)
+      t += '<tr><td>' + esc(from) + '</td><td>' + esc(to) + '</td>'
+      t += '<td>' + esc(matText(row.m)) + '</td>'
+      t += '<td class="num">' + (row.cost == null ? '—' : row.cost) + '</td></tr>'
+      cards += '<div class="skill codexCard">'
+      cards += '<div class="skillName">' + esc(from) + ' → ' + esc(to) + '</div>'
+      cards += '<div class="skillNote">' + esc(matText(row.m)) + '</div>'
+      cards += '<div class="skillNums"><span class="numChip">花费 <b>' + (row.cost == null ? '—' : row.cost) + '</b></span>' +
+               '<span class="numChip">目标 <b>' + esc(to) + '</b></span></div></div>'
+    }
+    t += '</tbody></table>'
+    table.innerHTML = shown.length === 0 ? '<div class="empty">没有匹配的强化配方</div>' : t
+    list.innerHTML = shown.length === 0 ? '' : cards
+    el('upMeta').textContent = '筛出 ' + rows.length + ' / 共 ' + d.gradeup.length + ' 步强化' +
+      (rows.length > shown.length ? '（先显示前 ' + shown.length + ' 条，用搜索缩小范围）' : '')
+  }
+
+  function mountCraft(){
+    var d = craftData()
+    if (!d) return
+    renderCraft()
+    renderUpgrade()
+    var box = el('craftSearch')
+    if (box) box.addEventListener('input', function(){ craftState.q = box.value; craftState.limit = 300; renderCraft() })
+    var ubox = el('upSearch')
+    if (ubox) ubox.addEventListener('input', function(){ craftState.upQ = ubox.value; craftState.limit = 300; renderUpgrade() })
+    var cats = el('craftCats')
+    if (cats) cats.addEventListener('click', function(event){
+      var node = event.target.closest ? event.target.closest('[data-ccat]') : null
+      if (!node) return
+      craftState.cat = node.getAttribute('data-ccat'); craftState.limit = 300; renderCraft()
+    })
+    var ucats = el('upCats')
+    if (ucats) ucats.addEventListener('click', function(event){
+      var node = event.target.closest ? event.target.closest('[data-ccat]') : null
+      if (!node) return
+      craftState.upCat = node.getAttribute('data-ccat'); craftState.limit = 300; renderUpgrade()
+    })
+    el('legend').textContent = boot.legend
+  }
+
   mountCodex()
+  mountCraft()
   el('legend').textContent = boot.legend
   el('captured').textContent = '技能表 ' + boot.capturedAt + ' 抓取'
   fetchLive()
@@ -2192,7 +2447,7 @@ ${ASSETS.favicon === null || hosted ? '' : `<link rel="apple-touch-icon" href="$
   <h2>私服在线</h2>
   <div class="grid" id="live"></div>
 
-  <h2>怪物图鉴 · 出现地点与等级</h2>
+  <h2>资料图鉴 · 怪物 / 地点 / 物品</h2>
   <div class="jobs" id="codexServers"></div>
   <div class="jobs" id="codexVariants"></div>
   <input id="codexSearch" placeholder="查怪物或地点（中/日/英文，或 0x… 编号）">
@@ -2200,6 +2455,22 @@ ${ASSETS.favicon === null || hosted ? '' : `<link rel="apple-touch-icon" href="$
   <div class="toolbar"><span class="tag" id="codexMeta"></span></div>
   <div id="codexList"></div>
   <div id="codexTable" class="wideWrap"></div>
+
+  <h2>合成配方 · 材料与耗时</h2>
+  <input id="craftSearch" placeholder="查成品或材料（中/日/英文）">
+  <div class="jobs" id="craftCats"></div>
+  <div class="toolbar"><span class="tag" id="craftMeta"></span></div>
+  <div id="craftList"></div>
+  <div id="craftTable" class="wideWrap"></div>
+
+  <h2>强化配方 · 星级提升</h2>
+  <p class="craftNote">星级是按数据的强化链推出来的：链上第 1 个状态就是 <b>★</b>，
+    满强 <b>★★★★</b>。Wiki 把整条链都写成同一个名字，看起来像原地升级。</p>
+  <input id="upSearch" placeholder="查物品（中/日/英文）">
+  <div class="jobs" id="upCats"></div>
+  <div class="toolbar"><span class="tag" id="upMeta"></span></div>
+  <div id="upList"></div>
+  <div id="upTable" class="wideWrap"></div>
 
   <h2>职业技能数据</h2>
   <input id="search" placeholder="搜索技能名、中文名或备注">

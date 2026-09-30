@@ -1263,7 +1263,7 @@ ${ASSETS.favicon === null ? '' : `<link rel="icon" type="image/png" href="${ASSE
   <h2>官方公告</h2>
   <div class="grid" id="news"></div>
 
-  <h2>怪物图鉴 · 出现地点与等级</h2>
+  <h2>资料图鉴 · 怪物 / 地点 / 物品</h2>
   <div id="codexPanel" style="display:none">
     <div class="jobs" id="codexTabs"></div>
     <div class="toolbar"><span class="tag" id="codexMeta"></span><span class="spacer"></span><span class="tag">点行展开：生成点与掉落表就长在这一行下面</span></div>
