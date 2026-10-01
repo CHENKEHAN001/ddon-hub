@@ -797,13 +797,20 @@ const JS = String.raw`
             var seenPlace = {}
             for (var oi = 0; oi < owners.length; oi++){
               var own = owners[oi]
-              var stageRow = codex.stages ? codex.stages[own.s] : null
-              /* 字典里的中文就是正式区域名（开发期房间名已由生成器换掉），没有才退回英文 */
-              var stage = (stageRow && (stageRow.zh || stageRow.en)) ||
-                          codexName(codex.stages, own.s, '')
-              if (!stage || /^\d+$/.test(stage)) continue
-              var shopCoord = coordText(own.s)
-              var label = (shopCoord ? stage + '（' + shopCoord + '）' : stage) + '·' + own.npc
+              /*
+               * 商店的标识是 **NPC**，不是地点。
+               *
+               * shops_function 里 key 底下挂的 NPC 散落在大陆各处（key=100 挂了 8 个，
+               * x 跨度 28 万），所以 key 不是"商店所在地"——早先拿它当地点，才出现
+               * 「斷崖的坑道·區塊」这种把副本当商店的错。NPC 名要与 Wiki 商店页一致
+               * （Rick / Rosa / Chunk …）。
+               *
+               * 坐标暂不显示：NPC 大多站在城内小地图上，那些块没有 quest_area_id，
+               * 我按世界坐标反推地块会把它标到别的大陆去（实测 Vicelot 被算成魔赤島）。
+               * 与其标错，不如只给名字——玩家认 NPC 名比认坐标管用。
+               */
+              var label = own.npc || ''
+              if (!label) continue
               if (seenPlace[label]) continue
               seenPlace[label] = 1
               bits.push(label)
