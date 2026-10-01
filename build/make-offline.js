@@ -1106,10 +1106,11 @@ const JS = String.raw`
     for (var j = 0; j < sorts.length; j++){
       html += '<div class="job' + (state.codexSort === sorts[j][0] ? ' on' : '') + '" data-csort="' + sorts[j][0] + '">' + sorts[j][1] + '</div>'
     }
-    /* 物品视图再加一行来源筛选：掉落只是来源之一，采集/商店/兑换各自可单独看 */
+    /* 物品视图再加一行来源筛选：掉落只是来源之一，采集/商店/兑换/合成/强化各自可单独看 */
     if (state.codexView === 'item'){
       var kinds = [['all', '全部来源'], ['drop', '掉落'], ['gather', '采集'],
-                   ['shop', '商店'], ['exchange', '兑换']]
+                   ['shop', '商店'], ['exchange', '兑换'],
+                   ['craft', '合成'], ['gradeup', '强化']]
       html += '<span class="codexFilterLabel">来源</span>'
       for (var f = 0; f < kinds.length; f++){
         html += '<div class="job' + (state.codexItemKind === kinds[f][0] ? ' on' : '') +
@@ -1162,23 +1163,67 @@ const JS = String.raw`
     return WALLET_LABEL[code] || ('货币 #' + code)
   }
 
-  function itemKindChips(entry){
-    var html = ''
+  /**
+   * 当前筛选下这个物品有哪些来源类型。
+   *
+   * 选了「商店」就只返回 ['shop']——列表卡片、表格行、展开详情**全都**要走这里，
+   * 否则点了商店，卡片上还是「掉落 1 采集 2 商店 1」并排显示，筛选等于没做。
+   */
+  function activeKinds(entry){
+    var want = state.codexItemKind
+    var out = []
     for (var k in ITEM_KIND_LABEL){
       if (!Object.prototype.hasOwnProperty.call(ITEM_KIND_LABEL, k)) continue
-      var n = entry.counts[k] || 0
-      if (n <= 0) continue
-      html += '<span class="numChip">' + ITEM_KIND_LABEL[k] + ' <b>' + n + '</b></span>'
+      if (want && want !== 'all' && k !== want) continue
+      if ((entry.counts[k] || 0) > 0) out.push(k)
+    }
+    return out
+  }
+
+  /** 当前筛选下的来源条数（全部来源时就是 sourceCount）。 */
+  function activeSourceCount(entry){
+    var ks = activeKinds(entry)
+    var n = 0
+    for (var i = 0; i < ks.length; i++) n += entry.counts[ks[i]] || 0
+    return n
+  }
+
+  /** 当前筛选下的来源行文本，按 ITEM_KIND_LABEL 的顺序拼。 */
+  function activeLines(entry, limit){
+    var ks = activeKinds(entry)
+    var out = []
+    for (var i = 0; i < ks.length; i++){
+      var ls = entry.lines[ks[i]] || []
+      for (var j = 0; j < ls.length; j++){
+        out.push(ls[j])
+        if (limit && out.length >= limit) return out
+      }
+    }
+    return out
+  }
+
+  function itemKindChips(entry){
+    var html = ''
+    var ks = activeKinds(entry)
+    for (var i = 0; i < ks.length; i++){
+      html += '<span class="numChip">' + ITEM_KIND_LABEL[ks[i]] + ' <b>' + entry.counts[ks[i]] + '</b></span>'
     }
     return html
   }
 
-  /** 一个物品的展开内容：按来源类型分组，最多列 40 条。 */
+  /**
+   * 一个物品的展开内容：按来源类型分组，最多列 40 条。
+   *
+   * 跟随顶部的来源筛选：选了「商店」就只列商店，不然筛选等于没做——用户点了商店，
+   * 展开还是掉落+采集+商店全都有。
+   */
   function itemSourcesHtml(entry){
     var html = '<div class="itemSources">'
     var total = 0
+    var want = state.codexItemKind
     for (var k in ITEM_KIND_LABEL){
       if (!Object.prototype.hasOwnProperty.call(ITEM_KIND_LABEL, k)) continue
+      if (want && want !== 'all' && k !== want) continue
       var list = entry.lines[k] || []
       if (list.length === 0) continue
       html += '<div class="itemSourceGroup"><span class="itemSourceKind">' + ITEM_KIND_LABEL[k] +
@@ -1214,25 +1259,19 @@ const JS = String.raw`
       cardHtml += '<div class="skill codexCard codexItemCard' + (open ? ' on' : '') + '" data-codex="item:' + esc(entry.id) + '">'
       cardHtml += '<div class="skillName">' + esc(entry.label || itemPair(row, entry.id)) + '</div>'
       cardHtml += '<div class="skillNums">' + itemKindChips(entry) +
-                  '<span class="numChip">来源 <b>' + entry.sourceCount + '</b></span></div>'
-      cardHtml += '<div class="skillNote">' + esc(entry.lines.drop.slice(0, 3).join('、') ||
-                  entry.lines.gather.slice(0, 2).join('、') || '') + '</div>'
+                  '<span class="numChip">来源 <b>' + activeSourceCount(entry) + '</b></span></div>'
+      cardHtml += '<div class="skillNote">' + esc(activeLines(entry, 3).join('、')) + '</div>'
       if (open) cardHtml += itemSourcesHtml(entry)
       cardHtml += '</div>'
       /* 表格视图 */
       var kinds = []
-      for (var kk in ITEM_KIND_LABEL){
-        if (!Object.prototype.hasOwnProperty.call(ITEM_KIND_LABEL, kk)) continue
-        if ((entry.counts[kk] || 0) > 0) kinds.push(ITEM_KIND_LABEL[kk] + ' ' + entry.counts[kk])
-      }
-      var first = ''
-      for (var k2 in ITEM_KIND_LABEL){
-        if (!Object.prototype.hasOwnProperty.call(ITEM_KIND_LABEL, k2)) continue
-        if ((entry.lines[k2] || []).length > 0){ first = entry.lines[k2][0]; break }
-      }
+      var aks = activeKinds(entry)
+      for (var ka = 0; ka < aks.length; ka++) kinds.push(ITEM_KIND_LABEL[aks[ka]] + ' ' + entry.counts[aks[ka]])
+      var firstLines = activeLines(entry, 1)
+      var first = firstLines.length ? firstLines[0] : ''
       table += '<tr class="' + (open ? 'on' : '') + '" data-codex="item:' + esc(entry.id) + '">'
       /* 行里只放第一条来源，容易让人以为只有这一个；全部来源挂 title，悬停可见 */
-      var allLines = []
+      var allLines = activeLines(entry, 0)
       for (var k3 in ITEM_KIND_LABEL){
         if (!Object.prototype.hasOwnProperty.call(ITEM_KIND_LABEL, k3)) continue
         var ls = entry.lines[k3] || []
