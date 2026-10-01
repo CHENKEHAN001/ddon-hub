@@ -780,7 +780,7 @@ const JS = String.raw`
         for (var g2 = 0; g2 < rec.gather.length; g2++){
           var ga = rec.gather[g2]
           var qty = ga.q ? (ga.q[0] === ga.q[1] ? '×' + ga.q[0] : '×' + ga.q[0] + '-' + ga.q[1]) : ''
-          lines.gather.push(codexName(codex.stages, ga.s, ga.s) + ' ' + qty)
+          lines.gather.push(placeText(ga.s, ga.s) + ' ' + qty)
         }
         for (var s2 = 0; s2 < rec.shop.length; s2++){
           var sh = rec.shop[s2]
@@ -802,7 +802,8 @@ const JS = String.raw`
               var stage = (stageRow && (stageRow.zh || stageRow.en)) ||
                           codexName(codex.stages, own.s, '')
               if (!stage || /^\d+$/.test(stage)) continue
-              var label = stage + '·' + own.npc
+              var shopCoord = coordText(own.s)
+              var label = (shopCoord ? stage + '（' + shopCoord + '）' : stage) + '·' + own.npc
               if (seenPlace[label]) continue
               seenPlace[label] = 1
               bits.push(label)
@@ -1287,7 +1288,7 @@ const JS = String.raw`
       var others = []
       for (var k = 0; k < ids.length; k++){
         /* 出现地点带日文原文；按地点看时列的是怪物，怪物名已有独立列，不重复贴 */
-        others.push(isMonster ? namePair(codex.stages, ids[k], ids[k]) : codexName(codex.monsters, ids[k], ids[k]))
+        others.push(isMonster ? placeText(ids[k], ids[k]) : codexName(codex.monsters, ids[k], ids[k]))
       }
       var open = state.codexOpen === (state.codexView + ':' + entry.id)
       html += '<div class="skill codexCard' + (open ? ' on' : '') + '" data-codex="' + esc(state.codexView + ':' + entry.id) + '">'
@@ -1318,7 +1319,7 @@ const JS = String.raw`
         var refs = isMonster ? codexKeys(item.places) : codexKeys(item.kinds)
         var refNames = []
         for (var r = 0; r < refs.length; r++){
-          refNames.push(isMonster ? namePair(codex.stages, refs[r], refs[r]) : codexName(codex.monsters, refs[r], refs[r]))
+          refNames.push(isMonster ? placeText(refs[r], refs[r]) : codexName(codex.monsters, refs[r], refs[r]))
         }
         var isOpen = state.codexOpen === (state.codexView + ':' + item.id)
         /* 「按地点」时把游戏坐标跟在名字后面（怪物/物品没有坐标）。 */
@@ -1360,6 +1361,17 @@ const JS = String.raw`
     if (!xy) return ''
     var conti = (c.continent || {})[String(id)] || ''
     return (conti ? conti + ' ' : '') + 'X:' + xy[0] + ' Y:' + xy[1]
+  }
+
+  /**
+   * 地点名 + 游戏坐标。用在所有「出现地点」的地方（怪物列表、详情里的掉落表等），
+   * 不只「按地点」那张表——否则同一个地名在别处看到就没有坐标，等于没做。
+   * 不带坐标的地点原样返回名字。
+   */
+  function placeText(id, fallback){
+    var name = codexName((codexData() || {}).stages, id, fallback == null ? id : fallback)
+    var coord = coordText(id)
+    return coord ? name + '（' + coord + '）' : name
   }
 
   /** 一行的展开内容；返回空串表示这一行没有可展开的东西。 */
@@ -1411,7 +1423,7 @@ const JS = String.raw`
     var spots = entry.rows.slice().sort(function(a, b){ return (a.min - b.min) || 0 })
     for (var j = 0; j < spots.length; j++){
       var spot = spots[j]
-      var where = isMonster ? namePair(codex.stages, spot.s, spot.s) : namePair(codex.monsters, spot.m, spot.m)
+      var where = isMonster ? placeText(spot.s, spot.s) : namePair(codex.monsters, spot.m, spot.m)
       var tables = (spot.d || []).filter(function (tid){ return tid > 0 && codex.drops[String(tid)] })
       html += '<div class="dropRow">'
       html += '<span class="dropPlace">' + esc(where) + ' <span class="dropLv">' + esc(codexLevel(spot.min, spot.max)) + '</span></span>'
