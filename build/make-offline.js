@@ -503,6 +503,13 @@ const JS = String.raw`
     return pick.defaultVariant || codexKeys(variants)[0]
   }
 
+  /** 频道变体的显示名（normal -> 普通频道）。掉落来源里要标出只在某个频道才掉的。 */
+  function variantLabel(key){
+    var variants = codexVariants()
+    var v = variants && variants[key]
+    return (v && (v.label || v.slug)) || key
+  }
+
   /*
    * 生成点存成紧凑数组（[m, s, min, max, n, exp, [掉落表id...]]）——三套数据一起内联，
    * 字段名重复上万次太浪费。这里解包回上层用的对象形状，其余代码一行都不用改。
@@ -719,13 +726,24 @@ const JS = String.raw`
         }
         var lines = { drop: [], gather: [], shop: [], exchange: [], craft: [], gradeup: [] }
         var mons = {}
+        var monsVariant = {}
         for (var d = 0; d < rec.drop.length; d++){
           var m = rec.drop[d]
           mons[m.m] = (mons[m.m] || 0) + 1
+          monsVariant[m.m] = monsVariant[m.m] || []
+          // 只在非默认频道掉的，把频道名带上——否则玩家在普通频道白找
+          // （溶鉱石のつぶて 就是只有 CUSTOM CHANNEL 的 リンドブルム 掉）
+          if (m.v && m.v.length){
+            for (var vi = 0; vi < m.v.length; vi++){
+              var vn = variantLabel(m.v[vi])
+              if (monsVariant[m.m].indexOf(vn) < 0) monsVariant[m.m].push(vn)
+            }
+          }
         }
         for (var mid in mons){
           if (!Object.prototype.hasOwnProperty.call(mons, mid)) continue
-          lines.drop.push(codexName(codex.monsters, mid, mid) + '（' + mons[mid] + ' 个地点）')
+          var vtag = monsVariant[mid].length ? '｜' + monsVariant[mid].join('/') + ' 频道' : ''
+          lines.drop.push(codexName(codex.monsters, mid, mid) + '（' + mons[mid] + ' 个地点）' + vtag)
         }
         for (var g2 = 0; g2 < rec.gather.length; g2++){
           var ga = rec.gather[g2]
