@@ -551,6 +551,25 @@ a.chip:hover{border-color:var(--dim);color:var(--fg)}
     return pick.defaultVariant || codexKeys(variants)[0]
   }
 
+  /**
+   * 物品来源用的频道：'all' 表示所有频道（不过滤），否则就是当前频道。
+   *
+   * 物品来源走的是另一套数据（item-sources.json，每条掉落自带 v 字段记录它在哪些
+   * 频道成立），它的筛选独立于图鉴数据的频道选取——图鉴数据选频道是换整份生成点，
+   * 这里只是过滤掉不属于当前频道的那些掉落。v 为空表示普通频道。
+   */
+  function sourceVariantKey(){
+    if (state.codexVariant === 'all') return null
+    return codexVariantKey()
+  }
+
+  /** 某条掉落是否属于当前频道（v 为空按普通频道算）。 */
+  function dropInVariant(src, key){
+    if (!key) return true
+    var vs = (src.v && src.v.length) ? src.v : ['normal']
+    return vs.indexOf(key) >= 0
+  }
+
   /** 频道变体的显示名（normal -> 普通频道）。掉落来源里要标出只在某个频道才掉的。 */
   function variantLabel(key){
     var variants = codexVariants()
@@ -791,6 +810,14 @@ a.chip:hover{border-color:var(--dim);color:var(--fg)}
           else if (src.k === 'gradeup') rec.gradeup.push(src)
         }
         var lines = { drop: [], gather: [], shop: [], exchange: [], craft: [], gradeup: [] }
+        /*
+         * 先把不属于当前频道的掉落剔掉，再统计——否则卡片上的「来源 N」和频道标签
+         * 还是全量数字，跟下面列出来的对不上。
+         */
+        var srcVar = sourceVariantKey()
+        if (srcVar){
+          rec.drop = rec.drop.filter(function (s){ return dropInVariant(s, srcVar) })
+        }
         var mons = {}
         var monsVariant = {}
         for (var d = 0; d < rec.drop.length; d++){
@@ -1106,6 +1133,10 @@ a.chip:hover{border-color:var(--dim);color:var(--fg)}
     host.style.display = ''
     var current = codexVariantKey()
     var html = '<span class="codexServerLabel">玩法</span>'
+    /* 「全部频道」放在最前面：不选它就只能看到一个频道的东西，而物品来源里的
+       Boss Rush / 联动 / 自定义掉落是按频道过滤的，玩家需要能一眼看全。 */
+    html += '<div class="job' + (state.codexVariant === 'all' ? ' on' : '') +
+            '" data-variant="all">全部频道</div>'
     for (var key in variants){
       if (!Object.prototype.hasOwnProperty.call(variants, key)) continue
       var v = variants[key]
