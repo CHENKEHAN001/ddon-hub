@@ -90,6 +90,18 @@ const CRAFT = fs.existsSync(CRAFT_SOURCE)
   ? JSON.parse(fs.readFileSync(CRAFT_SOURCE, 'utf8'))
   : null
 
+/**
+ * 地点的游戏坐标（地图右下角那种 XY）。
+ *
+ * 由 build-coords.py 生成：从 edelarrow 地图项目的 map_params/connections/gatherPoints
+ * 按公式 gx=floor((center_x+worldX*scale)/10) 算出来。各大陆有各自的 center/scale，
+ * 所以两个大陆的数字不会串。只有能定位的地点才有（314 个），其余前端不显示、不瞎编。
+ */
+const COORDS_SOURCE = path.join(ROOT, 'src', 'servers', 'coords.json')
+const COORDS = fs.existsSync(COORDS_SOURCE)
+  ? JSON.parse(fs.readFileSync(COORDS_SOURCE, 'utf8'))
+  : null
+
 const CODEX = (() => {
   if (SERVERS_FILE !== null) {
     const shared = {
@@ -117,7 +129,7 @@ const CODEX = (() => {
     }
     const first = Object.keys(servers)[0]
     return { ...shared, servers, defaultServer: first, ...servers[first],
-             itemSources: ITEM_SOURCES, craft: CRAFT }
+             itemSources: ITEM_SOURCES, craft: CRAFT, coords: COORDS }
   }
   /* 还没有多服务器数据时退回单份快照，保证老流程仍能构建 */
   const text = fs.readFileSync(MONSTERS_SOURCE, 'utf8')
@@ -197,6 +209,8 @@ input{min-height:34px;padding:6px 10px}
 /* 强化那节的说明：讲清星级是怎么来的（Wiki 没标星级，看着像原地升级） */
 .craftNote{margin:2px 0 8px;font-size:12.5px;line-height:1.6;color:var(--dim)}
 .craftNote b{color:var(--fg)}
+/* 地点的游戏坐标（游戏地图右下角那种 XY），跟在名字后面，别抢主名字的注意力 */
+.codexCoord{color:var(--dim);font-size:12px;white-space:nowrap;font-variant-numeric:tabular-nums}
 /*
  * 详情区域整体可点 = 收起（不用按钮）。
  * 里面的可编辑值要排除掉，否则点它想改中文会变成把详情关掉。
@@ -550,6 +564,9 @@ const JS = String.raw`
       stages: codex.stages,
       itemNames: codex.itemNames,
       itemSources: codex.itemSources,
+      /* 地点游戏坐标也要带出来——codexData() 返回的是逐字段新建的对象，
+         漏一个字段下面就拿不到（早先 coordText 一直返回空串就是漏了这行）。 */
+      coords: codex.coords,
       label: pick.label,
       declaredIn: pick.declaredIn,
       source: data.source || pick.source,
@@ -646,6 +663,21 @@ const JS = String.raw`
       }
     }
     var out = { byMonster: [], byStage: [] }
+    /*
+     * 有些地点没有怪物生成点（副本入口、据点），但它们在地图上有坐标。
+     * 不补进来的话，坐标算出来了却在「按地点」里查不到——用户拿着 XY 没法在站上核对。
+     * 所以用坐标表里有余、byStage 里没有的补上；这类条目怪物数为 0。
+     */
+    var coordMap = (codex && codex.coords && codex.coords.coords) || null
+    if (coordMap){
+      for (var csid in coordMap){
+        if (!Object.prototype.hasOwnProperty.call(coordMap, csid)) continue
+        if (byStage[csid]) continue
+        var crow = codex.stages[csid]
+        if (!crow) continue
+        byStage[csid] = { id: csid, row: crow, kinds: {}, n: 0, min: 0, max: 0, rows: [] }
+      }
+    }
     for (var key in byMonster) if (Object.prototype.hasOwnProperty.call(byMonster, key)) out.byMonster.push(byMonster[key])
     for (var key2 in byStage) if (Object.prototype.hasOwnProperty.call(byStage, key2)) out.byStage.push(byStage[key2])
 
@@ -1289,8 +1321,12 @@ const JS = String.raw`
           refNames.push(isMonster ? namePair(codex.stages, refs[r], refs[r]) : codexName(codex.monsters, refs[r], refs[r]))
         }
         var isOpen = state.codexOpen === (state.codexView + ':' + item.id)
+        /* 「按地点」时把游戏坐标跟在名字后面（怪物/物品没有坐标）。 */
+        var coord = !isMonster ? coordText(item.id) : ''
         table += '<tr class="' + (isOpen ? 'on' : '') + '" data-codex="' + esc(state.codexView + ':' + item.id) + '">'
-        table += '<td>' + esc(name) + '</td><td>' + esc(item.row.ja || '') + '</td>'
+        table += '<td>' + esc(name) +
+                 (coord ? ' <span class="codexCoord">' + esc(coord) + '</span>' : '') + '</td>'
+        table += '<td>' + esc(item.row.ja || '') + '</td>'
         table += '<td class="codexPlaces">' + esc(refNames.join('、')) + '</td>'
         table += '<td class="num">' + esc(codexLevel(item.min, item.max)) + '</td>'
         table += '<td class="num">' + refs.length + '</td><td class="num">' + item.n + '</td>'
@@ -1307,6 +1343,23 @@ const JS = String.raw`
 
     var stats = codex.stats || {}
     if (el('codexMeta')) el('codexMeta').textContent = rows.length + ' 行 · ' + (stats.monsters || 0) + ' 种怪物 · ' + (stats.locations || 0) + ' 个地点 · ' + (stats.spots || 0) + ' 条生成记录 · 译名来自汉化包'
+  }
+
+  /**
+   * 地点的游戏坐标，形如「亞克謝蘭大陸 X:268 Y:751」。
+   *
+   * 就是游戏地图右下角显示的那两个数（前面加所在大陆）。数据由 build-coords.py 从
+   * edelarrow 地图项目的 map_params/connections/gatherPoints 按 map.js 的公式算出来，
+   * 314 个地点有；没有的返回空串——宁可空着，不猜。
+   */
+  function coordText(id){
+    var codex = codexData()
+    var c = (codex && codex.coords) || null
+    if (!c || !c.coords) return ''
+    var xy = c.coords[String(id)]
+    if (!xy) return ''
+    var conti = (c.continent || {})[String(id)] || ''
+    return (conti ? conti + ' ' : '') + 'X:' + xy[0] + ' Y:' + xy[1]
   }
 
   /** 一行的展开内容；返回空串表示这一行没有可展开的东西。 */
@@ -1341,6 +1394,14 @@ const JS = String.raw`
     html += esc(isMonster ? codexName(codex.monsters, id, id) : codexName(codex.stages, id, id))
     html += ' <span class="tag">' + esc(entry.row.ja || '') + '</span>'
     html += '<span class="tag">' + String(entry.rows.length) + ' 个地点</span></span></div>'
+    /* 地点的话把游戏坐标也列出来（地图右下角那种），有就显示、没有就不显示 */
+    if (!isMonster){
+      var coord = coordText(id)
+      if (coord){
+        html += '<div class="kv"><span class="kvKey">坐标</span><span class="kvVal codexCoord">' +
+                esc(coord) + '</span></div>'
+      }
+    }
     html += '</div>'
     /*
      * 地点与掉落同一行、左右对齐：掉落表本来就是按地点分的，分开两栏会丢掉
