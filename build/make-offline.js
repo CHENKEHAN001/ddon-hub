@@ -1495,7 +1495,40 @@ const JS = String.raw`
     html += '<div class="kv"><span class="kvKey">' + (isMonster ? '怪物' : '地点') + '</span><span class="kvVal">'
     html += esc(isMonster ? codexName(codex.monsters, id, id) : codexName(codex.stages, id, id))
     html += ' <span class="tag">' + esc(entry.row.ja || '') + '</span>'
-    html += '<span class="tag">' + String(entry.rows.length) + ' 个地点</span></span></div>'
+    /*
+     * 同一地点会有多条生成记录（不同的生成点、经验值、掉落表 ID），直接逐条画
+     * 出来就是一屏的重复行（骷髏騎士 的 雷斯塔尼亞 连着出现两三次）。
+     *
+     * 按**渲染后的那一行**去重，而不是按字段：有的记录掉落表 ID 不同、内容却
+     * 一模一样，按字段判会留下看着重复的行。玩家眼里一样的东西就只该出现一次。
+     */
+    var dropRowHtml = function (spot){
+      var where = isMonster ? placeText(spot.s, spot.s) : namePair(codex.monsters, spot.m, spot.m)
+      var tables = (spot.d || []).filter(function (tid){ return tid > 0 && codex.drops[String(tid)] })
+      var h = '<div class="dropRow">'
+      h += '<span class="dropPlace">' + esc(where) + ' <span class="dropLv">' + esc(codexLevel(spot.min, spot.max)) + '</span></span>'
+      h += '<span class="dropItems">'
+      if (tables.length === 0){
+        h += '<span class="tag">无掉落表</span>'
+      } else {
+        for (var k = 0; k < tables.length; k++) h += dropChipsHtml(codex.drops[String(tables[k])], codex)
+      }
+      h += '</span></div>'
+      return h
+    }
+
+    var uniq = []
+    var seenRow = {}
+    var sortedSpots = entry.rows.slice().sort(function(a, b){ return (a.min - b.min) || 0 })
+    for (var si = 0; si < sortedSpots.length; si++){
+      var sp = sortedSpots[si]
+      var rowH = dropRowHtml(sp)
+      if (seenRow[rowH]) continue
+      seenRow[rowH] = 1
+      uniq.push({ spot: sp, html: rowH })
+    }
+
+    html += '<span class="tag">' + String(uniq.length) + ' 个地点</span></span></div>'
     /* 地点的话把游戏坐标也列出来（地图右下角那种），有就显示、没有就不显示 */
     if (!isMonster){
       var coord = coordText(id)
@@ -1507,24 +1540,10 @@ const JS = String.raw`
     html += '</div>'
     /*
      * 地点与掉落同一行、左右对齐：掉落表本来就是按地点分的，分开两栏会丢掉
-     * "这个点掉什么"。按等级排序，低级的点在前。
+     * "这个点掉什么"。行已经在上面渲染并去重过了。
      */
     html += '<div class="dropTable">'
-    var spots = entry.rows.slice().sort(function(a, b){ return (a.min - b.min) || 0 })
-    for (var j = 0; j < spots.length; j++){
-      var spot = spots[j]
-      var where = isMonster ? placeText(spot.s, spot.s) : namePair(codex.monsters, spot.m, spot.m)
-      var tables = (spot.d || []).filter(function (tid){ return tid > 0 && codex.drops[String(tid)] })
-      html += '<div class="dropRow">'
-      html += '<span class="dropPlace">' + esc(where) + ' <span class="dropLv">' + esc(codexLevel(spot.min, spot.max)) + '</span></span>'
-      html += '<span class="dropItems">'
-      if (tables.length === 0){
-        html += '<span class="tag">无掉落表</span>'
-      } else {
-        for (var k = 0; k < tables.length; k++) html += dropChipsHtml(codex.drops[String(tables[k])], codex)
-      }
-      html += '</span></div>'
-    }
+    for (var j = 0; j < uniq.length; j++) html += uniq[j].html
     html += '</div>'
     html += '<div class="foot" style="margin-top:8px"><div class="footRow"><span>数据来源</span><span>' + esc(codex.legend || '') + '</span></div></div>'
     html += '</div>'
