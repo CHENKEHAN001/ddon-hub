@@ -795,19 +795,32 @@ a.chip:hover{border-color:var(--dim);color:var(--fg)}
           var m = rec.drop[d]
           mons[m.m] = (mons[m.m] || 0) + 1
           monsVariant[m.m] = monsVariant[m.m] || []
-          // 只在非默认频道掉的，把频道名带上——否则玩家在普通频道白找
-          // （溶鉱石のつぶて 就是只有 CUSTOM CHANNEL 的 リンドブルム 掉）
+          /*
+           * 每只怪都标出它在哪个频道掉——包括普通频道。
+           *
+           * 早先只在非默认频道时才标，于是「林德沃姆｜自定义 频道」旁边站着光秃秃的
+           * 「盾牌哥布林」，看着像漏标了（用户就是这么问的）。数据里 v 为空就是普通
+           * 频道，那就明写「普通 频道」，别让人猜。
+           */
           if (m.v && m.v.length){
             for (var vi = 0; vi < m.v.length; vi++){
               var vn = variantLabel(m.v[vi])
               if (monsVariant[m.m].indexOf(vn) < 0) monsVariant[m.m].push(vn)
             }
+          } else if (monsVariant[m.m].indexOf('普通') < 0){
+            monsVariant[m.m].push('普通')
           }
         }
         for (var mid in mons){
           if (!Object.prototype.hasOwnProperty.call(mons, mid)) continue
           var vtag = monsVariant[mid].length ? '｜' + monsVariant[mid].join('/') + ' 频道' : ''
-          lines.drop.push(codexName(codex.monsters, mid, mid) + '（' + mons[mid] + ' 个地点）' + vtag)
+          /*
+           * 掉落这一行列的是**怪物**（哪只怪掉了它），所以只写怪物名。
+           * 以前跟一个「（N 个地点）」，本意是"这只怪在 N 个地点出现"，但读起来
+           * 像在说这只怪是个地点（用户就当成"大地魔像写成地点"了）。
+           * 地点数对这个物品没有意义——要查那只怪在哪，点「按怪物」看它就行。
+           */
+          lines.drop.push(codexName(codex.monsters, mid, mid) + vtag)
         }
         for (var g2 = 0; g2 < rec.gather.length; g2++){
           var ga = rec.gather[g2]
